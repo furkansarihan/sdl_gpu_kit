@@ -60,6 +60,8 @@ function(compile_shader SOURCE_FILE)
         add_custom_command(
             OUTPUT ${METAL_OUTPUT}
             COMMAND spirv-cross ${SPV_OUTPUT} --msl --output ${METAL_OUTPUT}
+                    --msl-decoration-binding
+                    --msl-discrete-descriptor-set 0
             DEPENDS ${SPV_OUTPUT}
         )
         

@@ -1,6 +1,18 @@
 #include <cmath>
 #include <cstring>
+#include <map>
+#include <string>
 #include <vector>
+
+#if defined(_WIN32) || defined(_WIN64)
+#include <Windows.h>
+#include <psapi.h>
+#elif defined(__linux__)
+#include <unistd.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <mach/mach.h>
+#endif
 
 #define SDL_MAIN_USE_CALLBACKS
 #include <SDL3/SDL.h>
@@ -14,6 +26,8 @@
 #include <glm/gtx/norm.hpp>
 
 #include <tiny_gltf.h>
+
+#include "stb_image.h"
 
 struct Vertex
 {
@@ -38,8 +52,22 @@ struct FragmentUniforms
     float padding2;
     glm::vec3 lightColor;
     float padding3;
-    glm::vec3 objectColor;
-    float padding4;
+};
+
+struct MaterialUniforms
+{
+    glm::vec4 albedoFactor;   // w component is unused
+    glm::vec4 emissiveFactor; // w component is emissiveStrength
+    float metallicFactor;
+    float roughnessFactor;
+    float occlusionStrength;
+    int hasAlbedoTexture;
+    int hasNormalTexture;
+    int hasMetallicRoughnessTexture;
+    int hasOcclusionTexture;
+    int hasEmissiveTexture;
+    glm::vec2 uvScale;
+    float padding[2];
 };
 
 // Camera state
@@ -74,6 +102,7 @@ struct PrimitiveData
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     std::string name;
+    int materialIndex = -1; // Index into loadedMaterials
 
     SDL_GPUBuffer *vertexBuffer = NULL;
     SDL_GPUBuffer *indexBuffer = NULL;
@@ -98,9 +127,105 @@ struct ModelData
 {
     std::vector<NodeData> nodes;
     std::vector<MeshData> meshes;
+    int baseMaterialIndex = 0; // Offset in the global loadedMaterials vector
+    int baseTextureIndex = 0;  // Offset in the global loadedTextures vector
 };
 
+struct Texture
+{
+    SDL_GPUTexture *texture = nullptr;
+    SDL_GPUSampler *sampler = nullptr;
+    int width, height, nrComponents;
+    glm::vec2 uvScale = glm::vec2(1.f);
+};
+
+class Material
+{
+public:
+    std::string name;
+
+    Texture *albedoTexture = nullptr;
+    Texture *normalTexture = nullptr;
+    Texture *metallicRoughnessTexture = nullptr;
+    Texture *occlusionTexture = nullptr;
+    Texture *emissiveTexture = nullptr;
+
+    glm::vec2 uvScale;
+    glm::vec4 albedo;
+    float roughness;
+    float metallic;
+    float opacity;
+    glm::vec4 emissiveColor; // (r, g, b, strength) - strength in alpha
+
+    Material(const std::string &name)
+        : name(name),
+          uvScale(glm::vec2(1.f)),
+          albedo(glm::vec4(1.f)),
+          metallic(0.f),
+          roughness(1.f),
+          opacity(1.f),
+          emissiveColor(glm::vec4(0.f, 0.f, 0.f, 0.f))
+    {
+    }
+};
+
+// Global resource vectors
 std::vector<ModelData *> loadedModels;
+std::vector<Material *> loadedMaterials;
+std::vector<Texture *> loadedTextures;
+std::vector<SDL_GPUSampler *> loadedSamplers;
+
+// Default resources
+SDL_GPUTexture *defaultWhiteTexture = nullptr;
+SDL_GPUTexture *defaultBlackTexture = nullptr;
+SDL_GPUTexture *defaultNormalTexture = nullptr;
+Material *defaultMaterial = nullptr;
+
+// Helper to create a default 1x1 texture
+SDL_GPUTexture *CreateDefaultTexture(Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+{
+    SDL_GPUTextureCreateInfo texInfo{};
+    texInfo.type = SDL_GPU_TEXTURETYPE_2D;
+    texInfo.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    texInfo.width = 1;
+    texInfo.height = 1;
+    texInfo.layer_count_or_depth = 1;
+    texInfo.num_levels = 1;
+    texInfo.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    SDL_GPUTexture *texture = SDL_CreateGPUTexture(device, &texInfo);
+
+    SDL_GPUTransferBufferCreateInfo transferInfo{};
+    transferInfo.size = 4;
+    transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    SDL_GPUTransferBuffer *transferBuffer = SDL_CreateGPUTransferBuffer(device, &transferInfo);
+
+    Uint8 *data = (Uint8 *)SDL_MapGPUTransferBuffer(device, transferBuffer, false);
+    data[0] = r;
+    data[1] = g;
+    data[2] = b;
+    data[3] = a;
+    SDL_UnmapGPUTransferBuffer(device, transferBuffer);
+
+    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(device);
+    SDL_GPUCopyPass *copyPass = SDL_BeginGPUCopyPass(cmd);
+
+    SDL_GPUTextureTransferInfo tti = {0};
+    SDL_GPUTextureRegion region = {0};
+    tti.transfer_buffer = transferBuffer;
+    region.texture = texture;
+    region.w = 1;
+    region.h = 1;
+    region.d = 1;
+    SDL_UploadToGPUTexture(copyPass, &tti, &region, 0);
+
+    SDL_EndGPUCopyPass(copyPass);
+    SDL_SubmitGPUCommandBuffer(cmd);
+
+    // We can destroy the transfer buffer now
+    SDL_ReleaseGPUTransferBuffer(device, transferBuffer);
+
+    return texture;
+}
 
 glm::mat4 GetNodeTransform(const tinygltf::Node &node)
 {
@@ -178,6 +303,17 @@ void ProcessNode(std::vector<NodeData> &nodes, const tinygltf::Model &model, int
     }
 }
 
+// Helper function to get the base directory from a file path
+static std::string GetBasePath(const std::string &path)
+{
+    size_t last_slash = path.find_last_of("/\\");
+    if (last_slash != std::string::npos)
+    {
+        return path.substr(0, last_slash);
+    }
+    return "."; // Use current directory if no path found
+}
+
 bool LoadGLTFModel(const char *filename)
 {
     tinygltf::Model model;
@@ -195,17 +331,159 @@ bool LoadGLTFModel(const char *filename)
         return false;
     }
 
-    SDL_Log("Loaded GLTF: %s (%zu meshes)", filename, model.meshes.size());
-
-    if (model.meshes.empty())
-    {
-        SDL_Log("No meshes found!");
-        return false;
-    }
+    SDL_Log("Loaded GLTF: %s (%zu meshes, %zu materials, %zu textures)",
+            filename, model.meshes.size(), model.materials.size(), model.textures.size());
 
     ModelData *modelData = new ModelData();
     loadedModels.push_back(modelData);
 
+    // Store base offsets
+    modelData->baseTextureIndex = (int)loadedTextures.size();
+    modelData->baseMaterialIndex = (int)loadedMaterials.size();
+
+    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(device);
+    SDL_GPUCopyPass *copyPass = SDL_BeginGPUCopyPass(cmd);
+
+    // --- 1. Load Textures ---
+    std::vector<SDL_GPUTransferBuffer *> textureTransferBuffers;
+    std::string baseDir = GetBasePath(filename); // Get base dir for external files
+
+    for (size_t i = 0; i < model.textures.size(); ++i)
+    {
+        const auto &gltfTex = model.textures[i];
+        if (gltfTex.source < 0)
+            continue;
+
+        const auto &gltfImage = model.images[gltfTex.source];
+
+        stbi_uc *loaded_pixels = nullptr;
+        const stbi_uc *pixel_source = nullptr;
+        int width = 0, height = 0, components = 0;
+        bool stb_loaded = false;
+
+        if (gltfImage.bufferView >= 0)
+        {
+            // Image is compressed in a buffer (e.g., PNG/JPG in a GLB)
+            const auto &view = model.bufferViews[gltfImage.bufferView];
+            const auto &buffer = model.buffers[view.buffer];
+            const stbi_uc *dataPtr = buffer.data.data() + view.byteOffset;
+            int dataLen = (int)view.byteLength;
+
+            loaded_pixels = stbi_load_from_memory(dataPtr, dataLen, &width, &height, &components, 4); // Force 4 components
+            stb_loaded = true;
+        }
+        else if (!gltfImage.uri.empty())
+        {
+            // Image is an external file
+            std::string imagePath = baseDir + "/" + gltfImage.uri;
+            loaded_pixels = stbi_load(imagePath.c_str(), &width, &height, &components, 4); // Force 4 components
+            stb_loaded = true;
+        }
+        else if (!gltfImage.image.empty())
+        {
+            // Image is raw, uncompressed data (original code's path)
+            pixel_source = gltfImage.image.data();
+            width = gltfImage.width;
+            height = gltfImage.height;
+            components = gltfImage.component;
+        }
+
+        if (!loaded_pixels && !pixel_source)
+        {
+            SDL_Log("Texture %zu has no image data, skipping", i);
+            loadedTextures.push_back(nullptr); // Push a null placeholder
+            continue;
+        }
+
+        SDL_GPUTextureCreateInfo texInfo{};
+        texInfo.type = SDL_GPU_TEXTURETYPE_2D;
+        texInfo.width = width;
+        texInfo.height = height;
+        texInfo.layer_count_or_depth = 1;
+        texInfo.num_levels = 1;
+        texInfo.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        texInfo.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM; // We always convert to this
+
+        Uint32 bufferSize = width * height * 4;
+
+        SDL_GPUTransferBufferCreateInfo transferInfo{};
+        transferInfo.size = bufferSize;
+        transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        SDL_GPUTransferBuffer *transferBuffer = SDL_CreateGPUTransferBuffer(device, &transferInfo);
+        textureTransferBuffers.push_back(transferBuffer); // Store for later release
+
+        // Map buffer and convert/copy image data
+        Uint8 *dst = (Uint8 *)SDL_MapGPUTransferBuffer(device, transferBuffer, false);
+
+        if (stb_loaded)
+        {
+            // STB already loaded and converted to RGBA
+            SDL_memcpy(dst, loaded_pixels, bufferSize);
+        }
+        SDL_UnmapGPUTransferBuffer(device, transferBuffer);
+
+        if (stb_loaded)
+        {
+            stbi_image_free(loaded_pixels); // Don't forget to free STB's data
+        }
+
+        // Create the GPU texture
+        SDL_GPUTexture *texture = SDL_CreateGPUTexture(device, &texInfo);
+
+        // Add to copy pass
+        SDL_GPUTextureTransferInfo tti = {0};
+        SDL_GPUTextureRegion region = {0};
+        tti.transfer_buffer = transferBuffer;
+        region.texture = texture;
+        region.w = width;
+        region.h = height;
+        region.d = 1;
+        SDL_UploadToGPUTexture(copyPass, &tti, &region, true); // Don't release yet
+
+        // Create our wrapper Texture object
+        Texture *tex = new Texture();
+        tex->texture = texture;
+        tex->width = width;
+        tex->height = height;
+        tex->nrComponents = 4; // We converted all to 4
+        // tex->sampler will be set from loadedSamplers[0] when rendering
+
+        loadedTextures.push_back(tex);
+    }
+
+    // --- 2. Load Materials ---
+    for (size_t i = 0; i < model.materials.size(); ++i)
+    {
+        const auto &gltfMat = model.materials[i];
+        Material *mat = new Material(gltfMat.name);
+
+        const auto &pbr = gltfMat.pbrMetallicRoughness;
+        if (pbr.baseColorFactor.size() == 4)
+            mat->albedo = glm::make_vec4(pbr.baseColorFactor.data());
+        if (pbr.baseColorTexture.index >= 0)
+            mat->albedoTexture = loadedTextures[pbr.baseColorTexture.index + modelData->baseTextureIndex];
+
+        mat->metallic = (float)pbr.metallicFactor;
+        mat->roughness = (float)pbr.roughnessFactor;
+        if (pbr.metallicRoughnessTexture.index >= 0)
+            mat->metallicRoughnessTexture = loadedTextures[pbr.metallicRoughnessTexture.index + modelData->baseTextureIndex];
+
+        if (gltfMat.normalTexture.index >= 0)
+            mat->normalTexture = loadedTextures[gltfMat.normalTexture.index + modelData->baseTextureIndex];
+
+        if (gltfMat.occlusionTexture.index >= 0)
+            mat->occlusionTexture = loadedTextures[gltfMat.occlusionTexture.index + modelData->baseTextureIndex];
+
+        if (gltfMat.emissiveFactor.size() == 3)
+            mat->emissiveColor = glm::vec4(glm::make_vec3(gltfMat.emissiveFactor.data()), 1.0f); // Store strength in alpha
+
+        if (gltfMat.emissiveTexture.index >= 0)
+            mat->emissiveTexture = loadedTextures[gltfMat.emissiveTexture.index + modelData->baseTextureIndex];
+
+        loadedMaterials.push_back(mat);
+    }
+
+    // --- 3. Process Nodes (Scene Hierarchy) ---
     if (!model.scenes.empty())
     {
         const auto &scene = model.scenes[model.defaultScene >= 0 ? model.defaultScene : 0];
@@ -219,20 +497,27 @@ bool LoadGLTFModel(const char *filename)
         SDL_Log("Processed %zu nodes", modelData->nodes.size());
     }
 
-    // Iterate through all meshes
+    // --- 4. Process Meshes and Primitives (Geometry) ---
     for (size_t meshIdx = 0; meshIdx < model.meshes.size(); ++meshIdx)
     {
         const auto &mesh = model.meshes[meshIdx];
-
         MeshData meshData;
 
         // Process each primitive in the mesh
         for (size_t primIdx = 0; primIdx < mesh.primitives.size(); ++primIdx)
         {
             const auto &prim = mesh.primitives[primIdx];
+            if (prim.attributes.find("POSITION") == prim.attributes.end())
+            {
+                SDL_Log("Primitive has no POSITION attribute, skipping.");
+                continue;
+            }
 
             PrimitiveData primData;
             primData.name = mesh.name.empty() ? ("mesh_" + std::to_string(meshIdx) + "_prim_" + std::to_string(primIdx)) : (mesh.name + "_prim_" + std::to_string(primIdx));
+
+            // Link material
+            primData.materialIndex = (prim.material >= 0) ? (prim.material + modelData->baseMaterialIndex) : -1;
 
             // Load positions
             const auto &posAccessor = model.accessors[prim.attributes.at("POSITION")];
@@ -271,33 +556,9 @@ bool LoadGLTFModel(const char *filename)
             primData.vertices.resize(posAccessor.count);
             for (size_t i = 0; i < posAccessor.count; ++i)
             {
-                primData.vertices[i].position.x = positions[i * posStride + 0];
-                primData.vertices[i].position.y = positions[i * posStride + 1];
-                primData.vertices[i].position.z = positions[i * posStride + 2];
-
-                if (hasNormal)
-                {
-                    primData.vertices[i].normal.x = normals[i * normStride + 0];
-                    primData.vertices[i].normal.y = normals[i * normStride + 1];
-                    primData.vertices[i].normal.z = normals[i * normStride + 2];
-                }
-                else
-                {
-                    primData.vertices[i].normal.x = 0.0f;
-                    primData.vertices[i].normal.y = 1.0f;
-                    primData.vertices[i].normal.z = 0.0f;
-                }
-
-                if (hasUV)
-                {
-                    primData.vertices[i].uv.x = uvs[i * uvStride + 0];
-                    primData.vertices[i].uv.y = uvs[i * uvStride + 1];
-                }
-                else
-                {
-                    primData.vertices[i].uv.x = 0.0f;
-                    primData.vertices[i].uv.y = 0.0f;
-                }
+                primData.vertices[i].position = glm::make_vec3(positions + i * posStride);
+                primData.vertices[i].normal = hasNormal ? glm::make_vec3(normals + i * normStride) : glm::vec3(0.0f, 1.0f, 0.0f);
+                primData.vertices[i].uv = hasUV ? glm::make_vec2(uvs + i * uvStride) : glm::vec2(0.0f, 0.0f);
             }
 
             // Load indices
@@ -329,62 +590,46 @@ bool LoadGLTFModel(const char *filename)
                 }
             }
 
-            SDL_Log("Loaded mesh '%s': %zu vertices, %zu indices", primData.name.c_str(), primData.vertices.size(), primData.indices.size());
+            SDL_Log("Loaded mesh '%s': %zu vertices, %zu indices, material: %d",
+                    primData.name.c_str(), primData.vertices.size(), primData.indices.size(), primData.materialIndex);
 
+            // --- Create GPU Buffers (Vertices) ---
+            SDL_GPUBufferCreateInfo vertexBufferInfo{};
+            vertexBufferInfo.size = primData.vertices.size() * sizeof(Vertex);
+            vertexBufferInfo.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
+            primData.vertexBuffer = SDL_CreateGPUBuffer(device, &vertexBufferInfo);
+
+            SDL_GPUTransferBufferCreateInfo vertexTransferInfo{};
+            vertexTransferInfo.size = vertexBufferInfo.size;
+            vertexTransferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+            primData.vertexTransferBuffer = SDL_CreateGPUTransferBuffer(device, &vertexTransferInfo);
+            Vertex *data = (Vertex *)SDL_MapGPUTransferBuffer(device, primData.vertexTransferBuffer, false);
+            SDL_memcpy(data, primData.vertices.data(), vertexBufferInfo.size);
+            SDL_UnmapGPUTransferBuffer(device, primData.vertexTransferBuffer);
+
+            SDL_GPUTransferBufferLocation vertexLocation = {primData.vertexTransferBuffer, 0};
+            SDL_GPUBufferRegion vertexRegion = {primData.vertexBuffer, 0, vertexBufferInfo.size};
+            SDL_UploadToGPUBuffer(copyPass, &vertexLocation, &vertexRegion, true); // Release transfer buffer
+
+            // --- Create GPU Buffers (Indices) ---
+            if (!primData.indices.empty())
             {
-                SDL_GPUBufferCreateInfo vertexBufferInfo{};
-                vertexBufferInfo.size = primData.vertices.size() * sizeof(Vertex);
-                vertexBufferInfo.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
-                primData.vertexBuffer = SDL_CreateGPUBuffer(device, &vertexBufferInfo);
-
-                SDL_GPUTransferBufferCreateInfo vertexTransferInfo{};
-                vertexTransferInfo.size = vertexBufferInfo.size;
-                vertexTransferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-                primData.vertexTransferBuffer = SDL_CreateGPUTransferBuffer(device, &vertexTransferInfo);
-
-                // fill the vertex transfer buffer
-                Vertex *data = (Vertex *)SDL_MapGPUTransferBuffer(device, primData.vertexTransferBuffer, false);
-                SDL_memcpy(data, primData.vertices.data(), vertexBufferInfo.size);
-                SDL_UnmapGPUTransferBuffer(device, primData.vertexTransferBuffer);
-
                 SDL_GPUBufferCreateInfo indexBufferInfo{};
-                if (!primData.indices.empty())
-                {
-                    indexBufferInfo.size = primData.indices.size() * sizeof(uint32_t);
-                    indexBufferInfo.usage = SDL_GPU_BUFFERUSAGE_INDEX;
-                    primData.indexBuffer = SDL_CreateGPUBuffer(device, &indexBufferInfo);
+                indexBufferInfo.size = primData.indices.size() * sizeof(uint32_t);
+                indexBufferInfo.usage = SDL_GPU_BUFFERUSAGE_INDEX;
+                primData.indexBuffer = SDL_CreateGPUBuffer(device, &indexBufferInfo);
 
-                    SDL_GPUTransferBufferCreateInfo indexTransferInfo{};
-                    indexTransferInfo.size = indexBufferInfo.size;
-                    indexTransferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-                    primData.indexTransferBuffer = SDL_CreateGPUTransferBuffer(device, &indexTransferInfo);
+                SDL_GPUTransferBufferCreateInfo indexTransferInfo{};
+                indexTransferInfo.size = indexBufferInfo.size;
+                indexTransferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+                primData.indexTransferBuffer = SDL_CreateGPUTransferBuffer(device, &indexTransferInfo);
+                uint32_t *indexMap = (uint32_t *)SDL_MapGPUTransferBuffer(device, primData.indexTransferBuffer, false);
+                SDL_memcpy(indexMap, primData.indices.data(), indexBufferInfo.size);
+                SDL_UnmapGPUTransferBuffer(device, primData.indexTransferBuffer);
 
-                    // fill the index transfer buffer
-                    uint32_t *indexMap = (uint32_t *)SDL_MapGPUTransferBuffer(device, primData.indexTransferBuffer, false);
-                    SDL_memcpy(indexMap, primData.indices.data(), indexBufferInfo.size);
-                    SDL_UnmapGPUTransferBuffer(device, primData.indexTransferBuffer);
-                }
-
-                // start a copy pass
-                SDL_GPUCommandBuffer *commandBuffer = SDL_AcquireGPUCommandBuffer(device);
-                SDL_GPUCopyPass *copyPass = SDL_BeginGPUCopyPass(commandBuffer);
-
-                // upload vertex data
-                SDL_GPUTransferBufferLocation vertexLocation = {primData.vertexTransferBuffer, 0};
-                SDL_GPUBufferRegion vertexRegion = {primData.vertexBuffer, 0, vertexBufferInfo.size};
-                SDL_UploadToGPUBuffer(copyPass, &vertexLocation, &vertexRegion, true);
-
-                // upload index data
-                if (!primData.indices.empty())
-                {
-                    SDL_GPUTransferBufferLocation indexLocation = {primData.indexTransferBuffer, 0};
-                    SDL_GPUBufferRegion indexRegion = {primData.indexBuffer, 0, indexBufferInfo.size};
-                    SDL_UploadToGPUBuffer(copyPass, &indexLocation, &indexRegion, true);
-                }
-
-                // end the copy pass
-                SDL_EndGPUCopyPass(copyPass);
-                SDL_SubmitGPUCommandBuffer(commandBuffer);
+                SDL_GPUTransferBufferLocation indexLocation = {primData.indexTransferBuffer, 0};
+                SDL_GPUBufferRegion indexRegion = {primData.indexBuffer, 0, indexBufferInfo.size};
+                SDL_UploadToGPUBuffer(copyPass, &indexLocation, &indexRegion, true); // Release transfer buffer
             }
 
             meshData.primitives.push_back(std::move(primData));
@@ -393,7 +638,18 @@ bool LoadGLTFModel(const char *filename)
         modelData->meshes.push_back(meshData);
     }
 
-    SDL_Log("Total: %zu meshes loaded", modelData->meshes.size());
+    // --- 5. Finalize Copy Pass ---
+    SDL_EndGPUCopyPass(copyPass);
+    SDL_SubmitGPUCommandBuffer(cmd);
+
+    // Release texture transfer buffers
+    for (auto *transferBuffer : textureTransferBuffers)
+    {
+        SDL_ReleaseGPUTransferBuffer(device, transferBuffer);
+    }
+
+    SDL_Log("Total: %zu meshes, %zu materials, %zu textures loaded for this model",
+            modelData->meshes.size(), model.materials.size(), model.textures.size());
 
     return true;
 }
@@ -419,6 +675,38 @@ void UpdateCamera(float dt)
 
     if (glm::length2(direction) > 0.f)
         camera.position += glm::normalize(direction) * velocity;
+}
+
+static std::string getExecutablePath()
+{
+    std::string path;
+    size_t lastSeparator;
+
+#if defined(_WIN32) || defined(_WIN64)
+    char buffer[MAX_PATH];
+    GetModuleFileNameA(NULL, buffer, MAX_PATH);
+    path = buffer;
+    lastSeparator = path.find_last_of("\\");
+#elif defined(__linux__)
+    char buffer[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+    if (len != -1)
+    {
+        buffer[len] = '\0';
+        path = buffer;
+    }
+    lastSeparator = path.find_last_of("/");
+#elif defined(__APPLE__)
+    char buffer[PATH_MAX];
+    uint32_t size = sizeof(buffer);
+    if (_NSGetExecutablePath(buffer, &size) == 0)
+    {
+        path = buffer;
+    }
+    lastSeparator = path.find_last_of("/");
+#endif
+
+    return path.substr(0, lastSeparator);
 }
 
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
@@ -459,11 +747,35 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 
     SDL_ClaimWindowForGPUDevice(device, window);
 
+    std::string exePath = getExecutablePath();
+
+    // create default resources
+    defaultWhiteTexture = CreateDefaultTexture(255, 255, 255, 255);
+    defaultBlackTexture = CreateDefaultTexture(0, 0, 0, 255);
+    defaultNormalTexture = CreateDefaultTexture(128, 128, 255, 255); // (0.5, 0.5, 1.0) normal
+    defaultMaterial = new Material("default");
+    loadedMaterials.push_back(defaultMaterial); // Add to global list, at index 0
+
+    SDL_GPUSamplerCreateInfo samplerInfo{};
+    samplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
+    samplerInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
+    samplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
+    samplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+    samplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+    samplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+    samplerInfo.max_anisotropy = 1.0f;
+    SDL_GPUSampler *sampler = SDL_CreateGPUSampler(device, &samplerInfo);
+    if (!sampler)
+    {
+        SDL_Log("Failed to create nearest sampler: %s", SDL_GetError());
+        return SDL_APP_FAILURE;
+    }
+    loadedSamplers.push_back(sampler);
+
     // create shaders
     size_t vertexCodeSize, fragmentCodeSize;
-    void *vertexCode = SDL_LoadFile(vertexShaderPath, &vertexCodeSize);
-    void *fragmentCode = SDL_LoadFile(fragmentShaderPath, &fragmentCodeSize);
-
+    void *vertexCode = SDL_LoadFile(std::string(exePath + "/" + vertexShaderPath).c_str(), &vertexCodeSize);
+    void *fragmentCode = SDL_LoadFile(std::string(exePath + "/" + fragmentShaderPath).c_str(), &fragmentCodeSize);
     if (!vertexCode || !fragmentCode)
     {
         SDL_Log("Failed to load shaders!");
@@ -479,7 +791,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     vertexInfo.num_samplers = 0;
     vertexInfo.num_storage_buffers = 0;
     vertexInfo.num_storage_textures = 0;
-    vertexInfo.num_uniform_buffers = 1;
+    vertexInfo.num_uniform_buffers = 1; // 1 for VertexUniforms
 
     SDL_GPUShaderCreateInfo fragmentInfo{};
     fragmentInfo.code_size = fragmentCodeSize;
@@ -487,10 +799,10 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     fragmentInfo.entrypoint = entryPoint;
     fragmentInfo.format = shaderFormat;
     fragmentInfo.stage = SDL_GPU_SHADERSTAGE_FRAGMENT;
-    fragmentInfo.num_samplers = 0;
+    fragmentInfo.num_samplers = 5; // Albedo, Normal, MR, Occlusion, Emissive
     fragmentInfo.num_storage_buffers = 0;
     fragmentInfo.num_storage_textures = 0;
-    fragmentInfo.num_uniform_buffers = 1;
+    fragmentInfo.num_uniform_buffers = 2; // 1 for SceneUniforms, 1 for MaterialUniforms
 
     SDL_GPUShader *vertexShader = SDL_CreateGPUShader(device, &vertexInfo);
     SDL_GPUShader *fragmentShader = SDL_CreateGPUShader(device, &fragmentInfo);
@@ -514,25 +826,9 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     pipelineInfo.vertex_input_state.vertex_buffer_descriptions = vertexBufferDesctiptions;
 
     SDL_GPUVertexAttribute vertexAttributes[3]{};
-
-    // inPosition
-    vertexAttributes[0].location = 0;
-    vertexAttributes[0].buffer_slot = 0;
-    vertexAttributes[0].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
-    vertexAttributes[0].offset = 0;
-
-    // inNormal
-    vertexAttributes[1].location = 1;
-    vertexAttributes[1].buffer_slot = 0;
-    vertexAttributes[1].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
-    vertexAttributes[1].offset = sizeof(float) * 3;
-
-    // inUV
-    vertexAttributes[2].location = 2;
-    vertexAttributes[2].buffer_slot = 0;
-    vertexAttributes[2].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
-    vertexAttributes[2].offset = sizeof(float) * 6;
-
+    vertexAttributes[0] = {0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 0};                 // pos
+    vertexAttributes[1] = {1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, sizeof(float) * 3}; // normal
+    vertexAttributes[2] = {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, sizeof(float) * 6}; // uv
     pipelineInfo.vertex_input_state.num_vertex_attributes = 3;
     pipelineInfo.vertex_input_state.vertex_attributes = vertexAttributes;
 
@@ -558,16 +854,13 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     SDL_ReleaseGPUShader(device, fragmentShader);
 
     // load model
-    // const char *modelPath = "assets/models/DamagedHelmet.glb";
-    const char *modelPath = "assets/models/ABeautifulGame.glb";
-    // const char *modelPath = "assets/models/Fox.glb";
-    // const char *modelPath = "assets/models/Sponza.glb";
-    LoadGLTFModel(modelPath);
+    const char *modelPath = "assets/models/DamagedHelmet.glb";
+    // const char *modelPath = "assets/models/ABeautifulGame.glb";
+    LoadGLTFModel(std::string(exePath + "/" + modelPath).c_str());
 
     // setup uniform values
     fragmentUniforms.lightPos = glm::vec3(5.0f, 5.0f, 5.0f);
-    fragmentUniforms.lightColor = glm::vec3(1.0f, 1.0f, 1.0f);
-    fragmentUniforms.objectColor = glm::vec3(0.8f, 0.8f, 0.8f);
+    fragmentUniforms.lightColor = glm::vec3(1.0f, 1.0f, 1.0f) * 10.f;
 
     return SDL_APP_CONTINUE;
 }
@@ -641,6 +934,11 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     // bind the pipeline
     SDL_BindGPUGraphicsPipeline(renderPass, graphicsPipeline);
 
+    // Push Scene-wide uniforms (Slot 0 for VS, Slot 0 for FS)
+    SDL_PushGPUVertexUniformData(commandBuffer, 0, &vertexUniforms, sizeof(vertexUniforms));       // VS binding 0
+    SDL_PushGPUFragmentUniformData(commandBuffer, 0, &fragmentUniforms, sizeof(fragmentUniforms)); // FS binding 0
+
+    // --- Render Models ---
     for (const auto &model : loadedModels)
         for (const auto &node : model->nodes)
         {
@@ -654,8 +952,54 @@ SDL_AppResult SDL_AppIterate(void *appstate)
                 // update per-node uniform data
                 vertexUniforms.model = node.worldTransform;
                 vertexUniforms.normalMatrix = glm::transpose(glm::inverse(vertexUniforms.model));
+                SDL_PushGPUVertexUniformData(commandBuffer, 0, &vertexUniforms, sizeof(vertexUniforms)); // Update VS UBO
 
-                // bind the vertex buffer
+                // Get material (fallback to default)
+                Material *material = (prim.materialIndex >= 0) ? loadedMaterials[prim.materialIndex] : defaultMaterial;
+
+                // Populate material uniform struct
+                MaterialUniforms materialUniforms{};
+                materialUniforms.albedoFactor = material->albedo;
+                materialUniforms.emissiveFactor = material->emissiveColor;
+                materialUniforms.metallicFactor = material->metallic;
+                materialUniforms.roughnessFactor = material->roughness;
+                materialUniforms.occlusionStrength = 1.0f; // TODO: from texture
+                materialUniforms.uvScale = material->uvScale;
+                materialUniforms.hasAlbedoTexture = (material->albedoTexture != nullptr);
+                materialUniforms.hasNormalTexture = (material->normalTexture != nullptr);
+                materialUniforms.hasMetallicRoughnessTexture = (material->metallicRoughnessTexture != nullptr);
+                materialUniforms.hasOcclusionTexture = (material->occlusionTexture != nullptr);
+                materialUniforms.hasEmissiveTexture = (material->emissiveTexture != nullptr);
+
+                // Push Material uniforms (Slot 1 for FS)
+                SDL_PushGPUFragmentUniformData(commandBuffer, 1, &materialUniforms, sizeof(materialUniforms)); // FS binding 1
+
+                // --- Bind Textures (Slots 0-4 for FS) ---
+                SDL_GPUTextureSamplerBinding texBindings[5];
+
+                // Binding 0: Albedo
+                texBindings[0].texture = material->albedoTexture ? material->albedoTexture->texture : defaultWhiteTexture;
+                texBindings[0].sampler = loadedSamplers[0];
+
+                // Binding 1: Normal
+                texBindings[1].texture = material->normalTexture ? material->normalTexture->texture : defaultNormalTexture;
+                texBindings[1].sampler = loadedSamplers[0];
+
+                // Binding 2: Metallic-Roughness
+                texBindings[2].texture = material->metallicRoughnessTexture ? material->metallicRoughnessTexture->texture : defaultWhiteTexture; // Use white (1,1,1) -> (metallic=1, rough=1)
+                texBindings[2].sampler = loadedSamplers[0];
+
+                // Binding 3: Occlusion
+                texBindings[3].texture = material->occlusionTexture ? material->occlusionTexture->texture : defaultWhiteTexture; // Use white (1.0) -> no occlusion
+                texBindings[3].sampler = loadedSamplers[0];
+
+                // Binding 4: Emissive
+                texBindings[4].texture = material->emissiveTexture ? material->emissiveTexture->texture : defaultBlackTexture; // Use black -> no emission
+                texBindings[4].sampler = loadedSamplers[0];
+
+                SDL_BindGPUFragmentSamplers(renderPass, 0, texBindings, 5); // Binds to slots 0, 1, 2, 3, 4
+
+                // bind vertex buffer
                 SDL_GPUBufferBinding bufferBinding{prim.vertexBuffer, 0};
                 SDL_BindGPUVertexBuffers(renderPass, 0, &bufferBinding, 1);
 
@@ -665,10 +1009,6 @@ SDL_AppResult SDL_AppIterate(void *appstate)
                     SDL_GPUBufferBinding indexBinding = {prim.indexBuffer, 0};
                     SDL_BindGPUIndexBuffer(renderPass, &indexBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
                 }
-
-                // update uniform data
-                SDL_PushGPUVertexUniformData(commandBuffer, 0, &vertexUniforms, sizeof(vertexUniforms));
-                SDL_PushGPUFragmentUniformData(commandBuffer, 0, &fragmentUniforms, sizeof(fragmentUniforms));
 
                 // issue a draw call
                 if (!prim.indices.empty())
@@ -738,15 +1078,36 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
                     SDL_ReleaseGPUBuffer(device, prim.vertexBuffer);
                 if (prim.indexBuffer)
                     SDL_ReleaseGPUBuffer(device, prim.indexBuffer);
-                if (prim.vertexTransferBuffer)
-                    SDL_ReleaseGPUTransferBuffer(device, prim.vertexTransferBuffer);
-                if (prim.indexTransferBuffer)
-                    SDL_ReleaseGPUTransferBuffer(device, prim.indexTransferBuffer);
             }
         }
 
         delete model;
     }
+
+    for (const auto &texture : loadedTextures)
+    {
+        if (texture && texture->texture)
+            SDL_ReleaseGPUTexture(device, texture->texture);
+        delete texture;
+    }
+
+    for (const auto &material : loadedMaterials)
+    {
+        delete material;
+    }
+
+    for (const auto &sampler : loadedSamplers)
+    {
+        SDL_ReleaseGPUSampler(device, sampler);
+    }
+
+    if (defaultWhiteTexture)
+        SDL_ReleaseGPUTexture(device, defaultWhiteTexture);
+    if (defaultBlackTexture)
+        SDL_ReleaseGPUTexture(device, defaultBlackTexture);
+    if (defaultNormalTexture)
+        SDL_ReleaseGPUTexture(device, defaultNormalTexture);
+
     if (graphicsPipeline)
         SDL_ReleaseGPUGraphicsPipeline(device, graphicsPipeline);
     if (device)
