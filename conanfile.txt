@@ -1,5 +1,7 @@
 [requires]
 sdl/3.2.26
+glm/cci.20230113
+tinygltf/2.9.7
 
 [generators]
 CMakeDeps

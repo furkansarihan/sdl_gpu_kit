@@ -3,6 +3,8 @@ project(app)
 
 # find libraries
 find_package(SDL3 REQUIRED)
+find_package(glm REQUIRED)
+find_package(TinyGLTF REQUIRED)
 # find_package(... REQUIRED)
 
 # Add all .cpp files in the src directory and its subdirectories
@@ -19,7 +21,12 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${ENIGINE_DIR}/src)
 
 # Link libraries
 target_link_libraries(${PROJECT_NAME} SDL3::SDL3)
+target_link_libraries(${PROJECT_NAME} glm::glm)
+target_link_libraries(${PROJECT_NAME} TinyGLTF::TinyGLTF)
 # target_link_libraries(${PROJECT_NAME} ...)
+
+# Copy assets
+file(COPY ${CMAKE_SOURCE_DIR}/assets DESTINATION ${CMAKE_BINARY_DIR}/)
 
 # Collect all shader files from src directory
 file(GLOB_RECURSE SHADER_SOURCES 
