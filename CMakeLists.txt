@@ -5,6 +5,7 @@ project(app)
 find_package(SDL3 REQUIRED)
 find_package(glm REQUIRED)
 find_package(TinyGLTF REQUIRED)
+find_package(imgui REQUIRED)
 # find_package(... REQUIRED)
 
 # Add all .cpp files in the src directory and its subdirectories
@@ -23,6 +24,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${ENIGINE_DIR}/src)
 target_link_libraries(${PROJECT_NAME} SDL3::SDL3)
 target_link_libraries(${PROJECT_NAME} glm::glm)
 target_link_libraries(${PROJECT_NAME} TinyGLTF::TinyGLTF)
+target_link_libraries(${PROJECT_NAME} imgui::imgui)
 # target_link_libraries(${PROJECT_NAME} ...)
 
 # Copy assets

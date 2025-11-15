@@ -4,20 +4,13 @@
 #include <string>
 #include <vector>
 
-#if defined(_WIN32) || defined(_WIN64)
-#include <Windows.h>
-#include <psapi.h>
-#elif defined(__linux__)
-#include <unistd.h>
-#elif defined(__APPLE__)
-#include <mach-o/dyld.h>
-#include <mach/mach.h>
-#endif
-
 #define SDL_MAIN_USE_CALLBACKS
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_gpu.h>
+
+#include <SDL3/SDL_events.h>
 #include <SDL3/SDL_main.h>
+#include <SDL3/SDL_mouse.h>
 #include <SDL3/SDL_scancode.h>
 
 #include <glm/glm.hpp>
@@ -28,6 +21,14 @@
 #include <tiny_gltf.h>
 
 #include "stb_image.h"
+
+#include "external/imgui/imgui_impl_sdl3.h"
+#include "external/imgui/imgui_impl_sdlgpu3.h"
+#include "ui/root_ui.h"
+#include "ui/system_monitor/system_monitor_ui.h"
+#include <imgui.h>
+
+#include "utils/common.h"
 
 struct Vertex
 {
@@ -119,6 +120,7 @@ VertexUniforms vertexUniforms{};
 FragmentUniforms fragmentUniforms{};
 
 bool keys[SDL_SCANCODE_COUNT]{};
+bool mouseButtons[6]{};
 float deltaTime = 0.0f;
 Uint64 lastFrame = 0;
 
@@ -214,6 +216,9 @@ SDL_GPUTexture *irradianceTexture = nullptr;
 SDL_GPUTexture *prefilterTexture = nullptr;
 
 ModelData *cubeModel;
+
+RootUI *rootUI;
+SystemMonitorUI *systemMonitorUI;
 
 // Helper to create a default 1x1 texture
 SDL_GPUTexture *CreateDefaultTexture(Uint8 r, Uint8 g, Uint8 b, Uint8 a)
@@ -881,38 +886,6 @@ void UpdateCamera(float dt)
         camera.position += glm::normalize(direction) * velocity;
 }
 
-static std::string getExecutablePath()
-{
-    std::string path;
-    size_t lastSeparator;
-
-#if defined(_WIN32) || defined(_WIN64)
-    char buffer[MAX_PATH];
-    GetModuleFileNameA(NULL, buffer, MAX_PATH);
-    path = buffer;
-    lastSeparator = path.find_last_of("\\");
-#elif defined(__linux__)
-    char buffer[PATH_MAX];
-    ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
-    if (len != -1)
-    {
-        buffer[len] = '\0';
-        path = buffer;
-    }
-    lastSeparator = path.find_last_of("/");
-#elif defined(__APPLE__)
-    char buffer[PATH_MAX];
-    uint32_t size = sizeof(buffer);
-    if (_NSGetExecutablePath(buffer, &size) == 0)
-    {
-        path = buffer;
-    }
-    lastSeparator = path.find_last_of("/");
-#endif
-
-    return path.substr(0, lastSeparator);
-}
-
 SDL_GPUShader *LoadShaderFromFile(
     const char *filepath,
     Uint32 numSamplers,
@@ -928,7 +901,7 @@ SDL_GPUShader *LoadShaderFromFile(
     const char *entryPoint = "main";
     const char *extension = ".spv";
 #endif
-    std::string exePath = getExecutablePath();
+    std::string exePath = CommonUtil::getExecutablePath();
 
     size_t codeSize;
     void *shaderCode = SDL_LoadFile(std::string(exePath + "/" + filepath + extension).c_str(), &codeSize);
@@ -1243,8 +1216,6 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
         return SDL_APP_FAILURE;
     }
 
-    SDL_SetWindowRelativeMouseMode(window, true);
-
     // create the device
     device = SDL_CreateGPUDevice(shaderFormat, false, deviceName);
     if (!device)
@@ -1255,7 +1226,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 
     SDL_ClaimWindowForGPUDevice(device, window);
 
-    std::string exePath = getExecutablePath();
+    std::string exePath = CommonUtil::getExecutablePath();
 
     // create default resources
     defaultWhiteTexture = CreateDefaultTexture(255, 255, 255, 255);
@@ -1665,6 +1636,37 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 
     skyboxPipeline = CreateSkyboxPipeline(device);
 
+    // Setup Dear ImGui context
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO &io = ImGui::GetIO();
+    io.IniFilename = NULL;
+    ImGui::StyleColorsDark();
+
+    // Setup Dear ImGui style
+    ImGui::StyleColorsDark();
+    // ImGui::StyleColorsLight();
+
+    // Setup scaling
+    ImGuiStyle &style = ImGui::GetStyle();
+    float main_scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+    style.ScaleAllSizes(main_scale); // Bake a fixed style scale. (until we have a solution for dynamic style scaling, changing this requires resetting Style + calling this again)
+    style.FontScaleDpi = main_scale; // Set initial font scale. (using io.ConfigDpiScaleFonts=true makes this unnecessary. We leave both here for documentation purpose)
+
+    // Setup Platform/Renderer backends
+    ImGui_ImplSDL3_InitForSDLGPU(window);
+    ImGui_ImplSDLGPU3_InitInfo init_info = {};
+    init_info.Device = device;
+    init_info.ColorTargetFormat = SDL_GetGPUSwapchainTextureFormat(device, window);
+    init_info.MSAASamples = SDL_GPU_SAMPLECOUNT_1;                     // Only used in multi-viewports mode.
+    init_info.SwapchainComposition = SDL_GPU_SWAPCHAINCOMPOSITION_SDR; // Only used in multi-viewports mode.
+    init_info.PresentMode = SDL_GPU_PRESENTMODE_VSYNC;
+    ImGui_ImplSDLGPU3_Init(&init_info);
+
+    rootUI = new RootUI();
+    systemMonitorUI = new SystemMonitorUI();
+    rootUI->add(systemMonitorUI);
+
     return SDL_APP_CONTINUE;
 }
 
@@ -1849,6 +1851,9 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     // end the render pass
     SDL_EndGPURenderPass(renderPass);
 
+    // render ui
+    rootUI->render(commandBuffer, swapchainTexture);
+
     // submit the command buffer
     SDL_SubmitGPUCommandBuffer(commandBuffer);
 
@@ -1857,6 +1862,8 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
 {
+    ImGui_ImplSDL3_ProcessEvent(event);
+
     if (event->type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
         return SDL_APP_SUCCESS;
 
@@ -1864,8 +1871,12 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
         keys[event->key.scancode] = true;
     if (event->type == SDL_EVENT_KEY_UP)
         keys[event->key.scancode] = false;
+    if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+        mouseButtons[event->button.button] = true;
+    if (event->type == SDL_EVENT_MOUSE_BUTTON_UP)
+        mouseButtons[event->button.button] = false;
 
-    if (event->type == SDL_EVENT_MOUSE_MOTION)
+    if (event->type == SDL_EVENT_MOUSE_MOTION && mouseButtons[SDL_BUTTON_RIGHT])
     {
         float xoffset = event->motion.xrel * camera.sensitivity;
         float yoffset = -event->motion.yrel * camera.sensitivity;
@@ -1940,4 +1951,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
         SDL_DestroyGPUDevice(device);
     if (window)
         SDL_DestroyWindow(window);
+
+    delete rootUI;
+    delete systemMonitorUI;
 }
