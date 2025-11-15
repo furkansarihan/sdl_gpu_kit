@@ -26,19 +26,19 @@ void main()
             // spherical to cartesian (in tangent space)
             vec3 tangentSample = vec3(sin(theta) * cos(phi),  sin(theta) * sin(phi), cos(theta));
             // tangent space to world
-            vec3 sampleVec = tangentSample.x * right + tangentSample.y * up + tangentSample.z * normal; 
+            vec3 sampleVec = normalize(tangentSample.x * right + tangentSample.y * up + tangentSample.z * normal);
 
             // Use textureLod with 0.0 to sample base mip level
             vec3 sampled = textureLod(environmentMap, sampleVec, 0.0).rgb * cos(theta) * sin(theta);
-            
+
             // eliminate fireflies
-            sampled = min(sampled, vec3(500.0));
-            
+            sampled = min(sampled, vec3(10.0));
+
             irradiance += sampled;
             nrSamples++;
         }
     }
     irradiance = PI * irradiance * (1.0 / float(nrSamples));
-  
+
     FragColor = vec4(irradiance, 1.0);
 }

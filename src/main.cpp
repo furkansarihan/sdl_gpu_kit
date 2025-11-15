@@ -1283,9 +1283,14 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     }
 
     SDL_GPUSamplerCreateInfo cubeSamplerInfo{};
+    cubeSamplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
+    cubeSamplerInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
+    cubeSamplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
     cubeSamplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
     cubeSamplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
     cubeSamplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    cubeSamplerInfo.enable_anisotropy = true;
+    cubeSamplerInfo.max_anisotropy = 16.0f;
     cubeSampler = SDL_CreateGPUSampler(device, &cubeSamplerInfo);
     if (!cubeSampler)
     {
@@ -1409,7 +1414,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
         cubemapInfo.sample_count = SDL_GPU_SAMPLECOUNT_1;
         cubemapInfo.width = 1024;
         cubemapInfo.height = 1024;
-        cubemapInfo.num_levels = 1; // Only base level
+        cubemapInfo.num_levels = 5;
         cubemapTexture = SDL_CreateGPUTexture(device, &cubemapInfo);
 
         // irradiance
@@ -1527,6 +1532,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
             }
             SDL_EndGPURenderPass(pass);
         }
+
+        SDL_GenerateMipmapsForGPUTexture(cmdbuf, cubemapTexture);
 
         SDL_GPUFence *initFence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmdbuf);
         SDL_WaitForGPUFences(device, true, &initFence, 1);
