@@ -4,6 +4,8 @@
 layout(location = 0) in vec3 fragPos;
 layout(location = 1) in vec3 fragNormal;
 layout(location = 2) in vec2 fragUV;
+layout(location = 3) in vec3 fragTangent;
+layout(location = 4) in vec3 fragBitangent;
 
 // Fragment shader output
 layout(location = 0) out vec4 outColor;
@@ -101,8 +103,16 @@ vec3 aces_tonemap(vec3 x)
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
 }
 
-vec3 pow3(vec3 x, float exponent) {
-    return vec3(pow(x.r, exponent), pow(x.g, exponent), pow(x.b, exponent));
+vec3 getNormalFromMap(vec2 uv, vec3 T, vec3 B, vec3 N)
+{
+    // Sample the normal map
+    vec3 tangentNormal = texture(normalMap, uv).xyz * 2.0 - 1.0;
+    
+    // Construct the TBN matrix
+    mat3 TBN = mat3(T, B, N);
+    
+    // Transform normal from tangent space to world space
+    return normalize(TBN * tangentNormal);
 }
 
 void main()
@@ -146,11 +156,11 @@ void main()
         ao = mix(1.0, ao, material.occlusionStrength);
     }
 
-    // Normal
+    // Normal with proper tangent space calculation
     vec3 N;
     if (material.hasNormalTexture > 0) {
-        // TODO: Need TBN matrix for proper normal mapping
-        N = normalize(fragNormal);
+        // Use TBN matrix for proper normal mapping
+        N = getNormalFromMap(uv, fragTangent, fragBitangent, fragNormal);
     } else {
         N = normalize(fragNormal);
     }
@@ -158,8 +168,6 @@ void main()
     vec3 V = normalize(ubo.viewPos - fragPos);
 
     // Calculate reflectance at normal incidence
-    // If dia-electric (like plastic) use F0 of 0.04 and if it's a metal, 
-    // use the albedo color as F0 (metallic workflow)
     vec3 F0 = vec3(0.04);
     F0 = mix(F0, albedo, metallic);
 
@@ -182,23 +190,11 @@ void main()
         float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
         vec3 specular = numerator / denominator;
 
-        // kS is equal to Fresnel
         vec3 kS = F;
-        // For energy conservation, the diffuse and specular light can't
-        // be above 1.0 (unless the surface emits light); to preserve this
-        // relationship the diffuse component (kD) should equal 1.0 - kS.
         vec3 kD = vec3(1.0) - kS;
-        // Multiply kD by the inverse metalness such that only non-metals 
-        // have diffuse lighting, or a linear blend if partly metal (pure metals
-        // have no diffuse light).
         kD *= 1.0 - metallic;
 
-        // Scale light by NdotL
         float NdotL = max(dot(N, L), 0.0);
-
-        // Add to outgoing radiance Lo
-        // Note that we already multiplied the BRDF by the Fresnel (kS) 
-        // so we won't multiply by kS again
         Lo += (kD * albedo / PI + specular) * radiance * NdotL;
     }
 
@@ -228,14 +224,17 @@ void main()
     // Apply exposure
     color *= ubo.exposure;
 
-    // Tone Mapping: Compress HDR color (which can be > 1.0) to LDR (0.0 - 1.0)
+    // Tone Mapping
     color = aces_tonemap(color);
     
-    // Gamma Correction: Convert from linear to sRGB color space for the monitor.
+    // Gamma Correction
     const float gamma = 2.2;
     color = pow(color, vec3(1.0 / gamma));
 
     outColor = vec4(color, 1.0);
+    // outColor = vec4(N, 1.0);
+    // outColor = vec4(fragTangent, 1.0);
+    // outColor = vec4(vec3(envBRDF.x), 1.0);
     // outColor = vec4(vec3(envBRDF.y), 1.0);
     // outColor = vec4(vec3(roughness), 1.0);
     // outColor = vec4(vec3(metallic), 1.0);

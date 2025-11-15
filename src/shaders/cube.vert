@@ -15,6 +15,7 @@ layout(location = 0) out vec3 localPos;
 void main()
 {
     localPos = aPos;
-    gl_Position = ubo.projection * ubo.view * ubo.model * vec4(aPos, 1.0);
+    mat4 viewNoTranslation = mat4(mat3(ubo.view));
+    gl_Position = ubo.projection * viewNoTranslation * ubo.model * vec4(aPos, 1.0);
     gl_Position.z = gl_Position.w;
 }
