@@ -47,7 +47,7 @@ struct VertexUniforms
 
 struct FragmentUniforms
 {
-    glm::vec3 lightPos;
+    glm::vec3 lightDir;
     float padding1;
     glm::vec3 viewPos;
     float padding2;
@@ -93,7 +93,7 @@ struct Camera
     glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
     float yaw = -90.0f;
     float pitch = 0.0f;
-    float speed = 2.5f;
+    float speed = 10.f;
     float sensitivity = 0.1f;
     float lastX = 640.0f;
     float lastY = 360.0f;
@@ -198,7 +198,8 @@ public:
 std::vector<ModelData *> loadedModels;
 std::vector<Material *> loadedMaterials;
 std::vector<Texture *> loadedTextures;
-std::vector<SDL_GPUSampler *> loadedSamplers;
+SDL_GPUSampler *baseSampler;
+SDL_GPUSampler *cubeSampler;
 
 // Default resources
 SDL_GPUTexture *defaultWhiteTexture = nullptr;
@@ -426,6 +427,18 @@ bool IsTextureLinear(const tinygltf::Model &model, int textureIndex)
     return true;
 }
 
+Uint32 CalcMipLevels(int w, int h)
+{
+    Uint32 levels = 1;
+    Uint32 size = (Uint32)SDL_max(w, h);
+    while (size > 1)
+    {
+        size >>= 1;
+        ++levels;
+    }
+    return levels;
+}
+
 ModelData *LoadGLTFModel(const char *filename)
 {
     tinygltf::Model model;
@@ -517,7 +530,7 @@ ModelData *LoadGLTFModel(const char *filename)
         texInfo.width = width;
         texInfo.height = height;
         texInfo.layer_count_or_depth = 1;
-        texInfo.num_levels = 1;
+        texInfo.num_levels = CalcMipLevels(width, height);
 
         Uint32 bufferSize = width * height * 4;
 
@@ -591,10 +604,11 @@ ModelData *LoadGLTFModel(const char *filename)
         SDL_GPUTextureRegion region = {0};
         tti.transfer_buffer = transferBuffer;
         region.texture = texture;
+        region.mip_level = 0;
         region.w = width;
         region.h = height;
         region.d = 1;
-        SDL_UploadToGPUTexture(copyPass, &tti, &region, true); // Don't release yet
+        SDL_UploadToGPUTexture(copyPass, &tti, &region, true);
 
         // Create wrapper Texture object
         Texture *tex = new Texture();
@@ -820,7 +834,17 @@ ModelData *LoadGLTFModel(const char *filename)
 
     // --- 5. Finalize Copy Pass ---
     SDL_EndGPUCopyPass(copyPass);
-    SDL_SubmitGPUCommandBuffer(cmd);
+
+    // Generate mipmaps
+    for (size_t i = modelData->baseTextureIndex; i < loadedTextures.size(); ++i)
+    {
+        if (loadedTextures[i] && loadedTextures[i]->texture)
+            SDL_GenerateMipmapsForGPUTexture(cmd, loadedTextures[i]->texture);
+    }
+
+    SDL_GPUFence *initFence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+    SDL_WaitForGPUFences(device, true, &initFence, 1);
+    SDL_ReleaseGPUFence(device, initFence);
 
     // Release texture transfer buffers
     for (auto *transferBuffer : textureTransferBuffers)
@@ -1045,6 +1069,8 @@ SDL_GPUTexture *LoadHdrTexture(SDL_GPUDevice *device, const char *filepath)
 
     SDL_EndGPUCopyPass(copyPass);
 
+    SDL_GenerateMipmapsForGPUTexture(commandBuffer, texture);
+
     SDL_GPUFence *initFence = SDL_SubmitGPUCommandBufferAndAcquireFence(commandBuffer);
     SDL_WaitForGPUFences(device, true, &initFence, 1);
     SDL_ReleaseGPUFence(device, initFence);
@@ -1245,14 +1271,27 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     samplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
     samplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
     samplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
-    samplerInfo.max_anisotropy = 1.0f;
-    SDL_GPUSampler *sampler = SDL_CreateGPUSampler(device, &samplerInfo);
-    if (!sampler)
+    samplerInfo.enable_anisotropy = true;
+    samplerInfo.max_anisotropy = 16.0f;
+    samplerInfo.min_lod = 0.0f;
+    samplerInfo.max_lod = 1000.0f;
+    baseSampler = SDL_CreateGPUSampler(device, &samplerInfo);
+    if (!baseSampler)
     {
-        SDL_Log("Failed to create nearest sampler: %s", SDL_GetError());
+        SDL_Log("Failed to create baseSampler: %s", SDL_GetError());
         return SDL_APP_FAILURE;
     }
-    loadedSamplers.push_back(sampler);
+
+    SDL_GPUSamplerCreateInfo cubeSamplerInfo{};
+    cubeSamplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    cubeSamplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    cubeSamplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    cubeSampler = SDL_CreateGPUSampler(device, &cubeSamplerInfo);
+    if (!cubeSampler)
+    {
+        SDL_Log("Failed to create cube sampler: %s", SDL_GetError());
+        return SDL_APP_FAILURE;
+    }
 
     // create shaders
     SDL_GPUShader *vertexShader = LoadShaderFromFile("src/shaders/pbr.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
@@ -1319,9 +1358,9 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     brdfSampler = SDL_CreateGPUSampler(device, &brdfSamplerInfo);
 
     // setup uniform values
-    fragmentUniforms.lightPos = glm::vec3(5.0f, 5.0f, 5.0f);
-    fragmentUniforms.lightColor = glm::vec3(1.0f, 1.0f, 1.0f) * 10.f;
-    fragmentUniforms.exposure = 1.1f;
+    fragmentUniforms.lightDir = glm::normalize(glm::vec3(-0.3f, -0.8f, -0.3f));
+    fragmentUniforms.lightColor = glm::vec3(1.0f) * 6.0f;
+    fragmentUniforms.exposure = 1.0f;
 
     int m_prefilterMipLevels = 5;
     int m_prefilterSize = 128;
@@ -1342,8 +1381,9 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     SDL_GPUSamplerCreateInfo hdrSamplerInfo{};
     hdrSamplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
     hdrSamplerInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
-    hdrSamplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
-    hdrSamplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+    hdrSamplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
+    hdrSamplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    hdrSamplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
     hdrSampler = SDL_CreateGPUSampler(device, &hdrSamplerInfo);
 
     // textures
@@ -1695,7 +1735,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
         glm::lookAt(center, center + camera.front, camera.up),
         vertexUniforms.projection,
         cubemapTexture, // Or prefilterMap, or irradianceMap
-        loadedSamplers[0],
+        cubeSampler,
         1.0,
         0.0f // LOD 0 for sharp skybox, higher for blurred
     );
@@ -1748,31 +1788,31 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
                 // Binding 0: Albedo
                 texBindings[0].texture = material->albedoTexture ? material->albedoTexture->texture : defaultWhiteTexture;
-                texBindings[0].sampler = loadedSamplers[0];
+                texBindings[0].sampler = baseSampler;
 
                 // Binding 1: Normal
                 texBindings[1].texture = material->normalTexture ? material->normalTexture->texture : defaultNormalTexture;
-                texBindings[1].sampler = loadedSamplers[0];
+                texBindings[1].sampler = baseSampler;
 
                 // Binding 2: Metallic-Roughness
                 texBindings[2].texture = material->metallicRoughnessTexture ? material->metallicRoughnessTexture->texture : defaultWhiteTexture; // Use white (1,1,1) -> (metallic=1, rough=1)
-                texBindings[2].sampler = loadedSamplers[0];
+                texBindings[2].sampler = baseSampler;
 
                 // Binding 3: Occlusion
                 texBindings[3].texture = material->occlusionTexture ? material->occlusionTexture->texture : defaultWhiteTexture; // Use white (1.0) -> no occlusion
-                texBindings[3].sampler = loadedSamplers[0];
+                texBindings[3].sampler = baseSampler;
 
                 // Binding 4: Emissive
                 texBindings[4].texture = material->emissiveTexture ? material->emissiveTexture->texture : defaultBlackTexture; // Use black -> no emission
-                texBindings[4].sampler = loadedSamplers[0];
+                texBindings[4].sampler = baseSampler;
 
                 // Binding 5: Irradiance
                 texBindings[5].texture = irradianceTexture;
-                texBindings[5].sampler = loadedSamplers[0];
+                texBindings[5].sampler = cubeSampler;
 
                 // Binding 6: Prefilter
                 texBindings[6].texture = prefilterTexture;
-                texBindings[6].sampler = loadedSamplers[0];
+                texBindings[6].sampler = cubeSampler;
 
                 // Binding 7: Lut
                 texBindings[7].texture = brdfTexture;
@@ -1877,10 +1917,8 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
         delete material;
     }
 
-    for (const auto &sampler : loadedSamplers)
-    {
-        SDL_ReleaseGPUSampler(device, sampler);
-    }
+    SDL_ReleaseGPUSampler(device, baseSampler);
+    SDL_ReleaseGPUSampler(device, cubeSampler);
 
     if (defaultWhiteTexture)
         SDL_ReleaseGPUTexture(device, defaultWhiteTexture);

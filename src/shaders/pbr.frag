@@ -12,7 +12,7 @@ layout(location = 0) out vec4 outColor;
 
 // Scene-wide uniforms
 layout(binding = 0) uniform FragmentUniformBlock {
-    vec3 lightPos;
+    vec3 lightDir;
     vec3 viewPos;
     vec3 lightColor;
     float exposure;
@@ -173,13 +173,13 @@ void main()
 
     // --- Direct Lighting ---
     vec3 Lo = vec3(0.0);
+    vec3 L = normalize(-ubo.lightDir);
+    float NdotL = max(dot(N, L), 0.0);
+
+    if (NdotL > 0.0)
     {
-        // Point light
-        vec3 L = normalize(ubo.lightPos - fragPos);
         vec3 H = normalize(V + L);
-        float distance = length(ubo.lightPos - fragPos);
-        float attenuation = 1.0 / (distance * distance);
-        vec3 radiance = ubo.lightColor * attenuation;
+        vec3 radiance = ubo.lightColor;
 
         // Cook-Torrance BRDF
         float NDF = DistributionGGX(N, H, roughness);
@@ -199,7 +199,7 @@ void main()
     }
 
     // --- Image-Based Lighting (IBL) ---
-    
+
     // Diffuse IBL
     vec3 irradiance = texture(irradianceMap, N).rgb;
     vec3 diffuse = irradiance * albedo;
@@ -232,13 +232,20 @@ void main()
     color = pow(color, vec3(1.0 / gamma));
 
     outColor = vec4(color, 1.0);
+    // outColor = vec4(emissive, 1.0);
+    // outColor = vec4(albedo, 1.0);
     // outColor = vec4(N, 1.0);
     // outColor = vec4(fragTangent, 1.0);
     // outColor = vec4(vec3(envBRDF.x), 1.0);
     // outColor = vec4(vec3(envBRDF.y), 1.0);
     // outColor = vec4(vec3(roughness), 1.0);
     // outColor = vec4(vec3(metallic), 1.0);
+
+    // outColor = vec4(texture(albedoMap, uv).rgb, 1.0);
+    // outColor = vec4(texture(emissiveMap, uv).rgb, 1.0);
     // outColor = vec4(textureLod(irradianceMap, N, 0).rgb, 1.0);
     // outColor = vec4(textureLod(prefilterMap, N, 0).rgb, 1.0);
     // outColor = vec4(texture(brdfLUT, N.xy).rgb, 1.0);
+    
+    // outColor = vec4(textureLod(albedoMap, uv, 0.0).rgb, 1.0);
 }
