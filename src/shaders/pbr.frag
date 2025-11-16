@@ -91,18 +91,6 @@ vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
     return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
-// ACES filmic tone mapping curve
-// Source: https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/
-vec3 aces_tonemap(vec3 x)
-{
-    const float a = 2.51;
-    const float b = 0.03;
-    const float c = 2.43;
-    const float d = 0.59;
-    const float e = 0.14;
-    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
-}
-
 vec3 getNormalFromMap(vec2 uv, vec3 T, vec3 B, vec3 N)
 {
     // Sample the normal map
@@ -221,16 +209,6 @@ void main()
     // --- Final Color ---
     vec3 color = ambient + Lo;
 
-    // Apply exposure
-    color *= ubo.exposure;
-
-    // Tone Mapping
-    color = aces_tonemap(color);
-    
-    // Gamma Correction
-    const float gamma = 2.2;
-    color = pow(color, vec3(1.0 / gamma));
-
     outColor = vec4(color, 1.0);
     // outColor = vec4(emissive, 1.0);
     // outColor = vec4(albedo, 1.0);
@@ -244,6 +222,7 @@ void main()
     // outColor = vec4(texture(albedoMap, uv).rgb, 1.0);
     // outColor = vec4(texture(emissiveMap, uv).rgb, 1.0);
     // outColor = vec4(textureLod(irradianceMap, N, 0).rgb, 1.0);
+    // outColor = vec4(textureLod(irradianceMap, fragNormal, 0).rgb, 1.0);
     // outColor = vec4(textureLod(prefilterMap, N, 0).rgb, 1.0);
     // outColor = vec4(texture(brdfLUT, N.xy).rgb, 1.0);
     

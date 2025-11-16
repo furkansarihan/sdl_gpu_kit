@@ -2,7 +2,7 @@
 
 #include <imgui.h>
 
-#include "../../utils/common.h"
+#include "../../utils/utils.h"
 
 void SystemMonitorUI::renderUI()
 {
@@ -11,6 +11,6 @@ void SystemMonitorUI::renderUI()
 
     ImGuiIO &io = ImGui::GetIO();
     ImGui::Text("FPS: %.1f", io.Framerate);
-    uint64_t m_ramUsage = CommonUtil::getRamUsage();
+    uint64_t m_ramUsage = Utils::getRamUsage();
     ImGui::Text("RAM: %.2f MB", static_cast<float>(m_ramUsage) / (1024.0f * 1024.0f));
 }

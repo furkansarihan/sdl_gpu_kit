@@ -11,6 +11,7 @@
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL_mouse.h>
+#include <SDL3/SDL_render.h>
 #include <SDL3/SDL_scancode.h>
 
 #include <glm/glm.hpp>
@@ -28,7 +29,9 @@
 #include "ui/system_monitor/system_monitor_ui.h"
 #include <imgui.h>
 
-#include "utils/common.h"
+#include "utils/utils.h"
+
+#include "post_process/post_process.h"
 
 struct Vertex
 {
@@ -103,8 +106,6 @@ struct Camera
 
 SDL_Window *window;
 SDL_GPUDevice *device;
-
-SDL_GPUTexture *depthTex = nullptr;
 
 SDL_GPUGraphicsPipeline *graphicsPipeline;
 SDL_GPUGraphicsPipeline *brdfPipeline;
@@ -200,8 +201,8 @@ public:
 std::vector<ModelData *> loadedModels;
 std::vector<Material *> loadedMaterials;
 std::vector<Texture *> loadedTextures;
-SDL_GPUSampler *baseSampler;
 SDL_GPUSampler *cubeSampler;
+SDL_GPUSampler *skySampler;
 
 // Default resources
 SDL_GPUTexture *defaultWhiteTexture = nullptr;
@@ -219,6 +220,8 @@ ModelData *cubeModel;
 
 RootUI *rootUI;
 SystemMonitorUI *systemMonitorUI;
+
+PostProcess *postProcess;
 
 // Helper to create a default 1x1 texture
 SDL_GPUTexture *CreateDefaultTexture(Uint8 r, Uint8 g, Uint8 b, Uint8 a)
@@ -886,49 +889,6 @@ void UpdateCamera(float dt)
         camera.position += glm::normalize(direction) * velocity;
 }
 
-SDL_GPUShader *LoadShaderFromFile(
-    const char *filepath,
-    Uint32 numSamplers,
-    Uint32 numUniformBuffers,
-    SDL_GPUShaderStage stage)
-{
-#if defined(__APPLE__)
-    const SDL_GPUShaderFormat shaderFormat = SDL_GPU_SHADERFORMAT_METALLIB;
-    const char *entryPoint = "main0";
-    const char *extension = ".metallib";
-#else
-    const SDL_GPUShaderFormat shaderFormat = SDL_GPU_SHADERFORMAT_SPIRV;
-    const char *entryPoint = "main";
-    const char *extension = ".spv";
-#endif
-    std::string exePath = CommonUtil::getExecutablePath();
-
-    size_t codeSize;
-    void *shaderCode = SDL_LoadFile(std::string(exePath + "/" + filepath + extension).c_str(), &codeSize);
-    if (!shaderCode)
-    {
-        SDL_Log("Failed to load shader!");
-        return NULL;
-    }
-
-    SDL_GPUShaderCreateInfo shaderInfo = {};
-    shaderInfo.code_size = codeSize;
-    shaderInfo.code = (Uint8 *)shaderCode;
-    shaderInfo.entrypoint = entryPoint;
-    shaderInfo.format = shaderFormat;
-    shaderInfo.stage = stage;
-    shaderInfo.num_samplers = numSamplers;
-    shaderInfo.num_storage_textures = 0;
-    shaderInfo.num_storage_buffers = 0;
-    shaderInfo.num_uniform_buffers = numUniformBuffers;
-
-    SDL_GPUShader *shader = SDL_CreateGPUShader(device, &shaderInfo);
-
-    SDL_free(shaderCode);
-
-    return shader;
-}
-
 SDL_GPUGraphicsPipeline *CreatePbrPipeline(
     SDL_GPUDevice *device,
     SDL_GPUShader *vertexShader,
@@ -1054,8 +1014,8 @@ SDL_GPUTexture *LoadHdrTexture(SDL_GPUDevice *device, const char *filepath)
 SDL_GPUGraphicsPipeline *CreateSkyboxPipeline(SDL_GPUDevice *device)
 {
     // Load shaders
-    SDL_GPUShader *skyboxVertShader = LoadShaderFromFile("src/shaders/cube.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
-    SDL_GPUShader *skyboxFragShader = LoadShaderFromFile("src/shaders/skybox.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    SDL_GPUShader *skyboxVertShader = Utils::LoadShader("src/shaders/cube.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
+    SDL_GPUShader *skyboxFragShader = Utils::LoadShader("src/shaders/skybox.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
     // Vertex input - reuse your existing Vertex structure
     SDL_GPUVertexAttribute vertexAttributes[4] = {};
@@ -1113,7 +1073,7 @@ SDL_GPUGraphicsPipeline *CreateSkyboxPipeline(SDL_GPUDevice *device)
 
     // Color target
     SDL_GPUColorTargetDescription colorTarget = {};
-    colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM; // Or your swapchain format
+    colorTarget.format = SDL_GetGPUSwapchainTextureFormat(device, window);
 
     SDL_GPUGraphicsPipelineTargetInfo targetInfo = {};
     targetInfo.color_target_descriptions = &colorTarget;
@@ -1149,27 +1109,16 @@ void RenderSkybox(
     const glm::mat4 &viewMatrix,
     const glm::mat4 &projectionMatrix,
     SDL_GPUTexture *environmentCubemap,
-    SDL_GPUSampler *sampler,
-    float exposure = 1.0f,
-    float lod = 0.0f)
+    SDL_GPUSampler *sampler)
 {
     CubemapViewUBO vertUniforms;
     vertUniforms.model = glm::scale(glm::mat4(1.0), {1.f, -1.f, 1.f});
     vertUniforms.view = viewMatrix;
     vertUniforms.projection = projectionMatrix;
 
-    struct SkyboxFragmentUniforms
-    {
-        float exposure;
-        float lod;
-        float padding[2];
-    } fragUniforms;
-    fragUniforms.exposure = exposure;
-    fragUniforms.lod = lod;
-
     // Push uniforms
     SDL_PushGPUVertexUniformData(commandBuffer, 0, &vertUniforms, sizeof(vertUniforms));
-    SDL_PushGPUFragmentUniformData(commandBuffer, 0, &fragUniforms, sizeof(fragUniforms));
+    SDL_PushGPUFragmentUniformData(commandBuffer, 0, &postProcess->m_skyUBO, sizeof(postProcess->m_skyUBO));
 
     // Bind pipeline
     SDL_BindGPUGraphicsPipeline(renderPass, skyboxPipeline);
@@ -1208,8 +1157,10 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     const SDL_GPUShaderFormat shaderFormat = SDL_GPU_SHADERFORMAT_SPIRV;
 #endif
 
+    glm::ivec2 screenSize{1280, 720};
+
     // create a window
-    window = SDL_CreateWindow("SDL_GPU_Kit", 1280, 720, SDL_WINDOW_RESIZABLE);
+    window = SDL_CreateWindow("SDL_GPU_Kit", screenSize.x, screenSize.y, SDL_WINDOW_RESIZABLE);
     if (!window)
     {
         SDL_Log("Window creation failed: %s", SDL_GetError());
@@ -1226,7 +1177,10 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 
     SDL_ClaimWindowForGPUDevice(device, window);
 
-    std::string exePath = CommonUtil::getExecutablePath();
+    Utils::device = device;
+    Utils::window = window;
+
+    std::string exePath = Utils::getExecutablePath();
 
     // create default resources
     defaultWhiteTexture = CreateDefaultTexture(255, 255, 255, 255);
@@ -1246,8 +1200,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     samplerInfo.max_anisotropy = 16.0f;
     samplerInfo.min_lod = 0.0f;
     samplerInfo.max_lod = 1000.0f;
-    baseSampler = SDL_CreateGPUSampler(device, &samplerInfo);
-    if (!baseSampler)
+    Utils::baseSampler = SDL_CreateGPUSampler(device, &samplerInfo);
+    if (!Utils::baseSampler)
     {
         SDL_Log("Failed to create baseSampler: %s", SDL_GetError());
         return SDL_APP_FAILURE;
@@ -1269,9 +1223,18 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
         return SDL_APP_FAILURE;
     }
 
+    cubeSamplerInfo.min_lod = 0.0f;
+    cubeSamplerInfo.max_lod = 100.0f;
+    skySampler = SDL_CreateGPUSampler(device, &cubeSamplerInfo);
+    if (!cubeSampler)
+    {
+        SDL_Log("Failed to create sky sampler: %s", SDL_GetError());
+        return SDL_APP_FAILURE;
+    }
+
     // create shaders
-    SDL_GPUShader *vertexShader = LoadShaderFromFile("src/shaders/pbr.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
-    SDL_GPUShader *fragmentShader = LoadShaderFromFile("src/shaders/pbr.frag", 8, 2, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    SDL_GPUShader *vertexShader = Utils::LoadShader("src/shaders/pbr.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
+    SDL_GPUShader *fragmentShader = Utils::LoadShader("src/shaders/pbr.frag", 8, 2, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
     // create the graphics pipeline
     SDL_GPUGraphicsPipelineCreateInfo pipelineInfo{};
@@ -1347,12 +1310,12 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     // loadedModels.push_back(cubeModel);
 
     // shaders
-    SDL_GPUShader *quadVert = LoadShaderFromFile("src/shaders/quad.vert", 0, 0, SDL_GPU_SHADERSTAGE_VERTEX);
-    SDL_GPUShader *cubeVert = LoadShaderFromFile("src/shaders/cube.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
-    SDL_GPUShader *hdrToCubeFrag = LoadShaderFromFile("src/shaders/hdr_to_cube.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
-    SDL_GPUShader *irradianceFrag = LoadShaderFromFile("src/shaders/irradiance.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
-    SDL_GPUShader *prefilterFrag = LoadShaderFromFile("src/shaders/prefilter.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
-    SDL_GPUShader *brdfFrag = LoadShaderFromFile("src/shaders/brdf.frag", 0, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    SDL_GPUShader *quadVert = Utils::LoadShader("src/shaders/quad.vert", 0, 0, SDL_GPU_SHADERSTAGE_VERTEX);
+    SDL_GPUShader *cubeVert = Utils::LoadShader("src/shaders/cube.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
+    SDL_GPUShader *hdrToCubeFrag = Utils::LoadShader("src/shaders/hdr_to_cube.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    SDL_GPUShader *irradianceFrag = Utils::LoadShader("src/shaders/irradiance.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    SDL_GPUShader *prefilterFrag = Utils::LoadShader("src/shaders/prefilter.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    SDL_GPUShader *brdfFrag = Utils::LoadShader("src/shaders/brdf.frag", 0, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
     SDL_GPUSamplerCreateInfo hdrSamplerInfo{};
     hdrSamplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
@@ -1667,6 +1630,10 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     systemMonitorUI = new SystemMonitorUI();
     rootUI->add(systemMonitorUI);
 
+    postProcess = new PostProcess();
+    postProcess->update(screenSize);
+    rootUI->add(postProcess);
+
     return SDL_APP_CONTINUE;
 }
 
@@ -1693,25 +1660,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
         return SDL_APP_CONTINUE;
     }
 
-    static Uint32 lastW = 0, lastH = 0;
-    if (!depthTex || lastW != width || lastH != height)
-    {
-        if (depthTex)
-            SDL_ReleaseGPUTexture(device, depthTex);
-
-        SDL_GPUTextureCreateInfo depthInfo{};
-        depthInfo.type = SDL_GPU_TEXTURETYPE_2D;
-        depthInfo.format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
-        depthInfo.width = width;
-        depthInfo.height = height;
-        depthInfo.layer_count_or_depth = 1;
-        depthInfo.num_levels = 1;
-        depthInfo.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
-        depthTex = SDL_CreateGPUTexture(device, &depthInfo);
-
-        lastW = width;
-        lastH = height;
-    }
+    postProcess->update({width, height});
 
     // update common uniform data
     vertexUniforms.view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
@@ -1720,14 +1669,14 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
     // create the color target
     SDL_GPUColorTargetInfo colorTargetInfo{};
-    colorTargetInfo.clear_color = {0.1f, 0.1f, 0.15f, 1.0f};
+    colorTargetInfo.texture = postProcess->m_colorTexture;
+    colorTargetInfo.clear_color = {0.f, 0.f, 0.f, 1.0f};
     colorTargetInfo.load_op = SDL_GPU_LOADOP_CLEAR;
     colorTargetInfo.store_op = SDL_GPU_STOREOP_STORE;
-    colorTargetInfo.texture = swapchainTexture;
 
     // create the depth target
     SDL_GPUDepthStencilTargetInfo depthInfo{};
-    depthInfo.texture = depthTex;
+    depthInfo.texture = postProcess->m_depthTexture;
     depthInfo.clear_depth = 1.0f;
     depthInfo.load_op = SDL_GPU_LOADOP_CLEAR;
     depthInfo.store_op = SDL_GPU_STOREOP_DONT_CARE;
@@ -1744,10 +1693,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
         glm::lookAt(center, center + camera.front, camera.up),
         vertexUniforms.projection,
         cubemapTexture, // Or prefilterMap, or irradianceMap
-        cubeSampler,
-        1.0,
-        0.0f // LOD 0 for sharp skybox, higher for blurred
-    );
+        skySampler);
 
     // bind the pipeline
     SDL_BindGPUGraphicsPipeline(renderPass, graphicsPipeline);
@@ -1797,23 +1743,23 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
                 // Binding 0: Albedo
                 texBindings[0].texture = material->albedoTexture ? material->albedoTexture->texture : defaultWhiteTexture;
-                texBindings[0].sampler = baseSampler;
+                texBindings[0].sampler = Utils::baseSampler;
 
                 // Binding 1: Normal
                 texBindings[1].texture = material->normalTexture ? material->normalTexture->texture : defaultNormalTexture;
-                texBindings[1].sampler = baseSampler;
+                texBindings[1].sampler = Utils::baseSampler;
 
                 // Binding 2: Metallic-Roughness
                 texBindings[2].texture = material->metallicRoughnessTexture ? material->metallicRoughnessTexture->texture : defaultWhiteTexture; // Use white (1,1,1) -> (metallic=1, rough=1)
-                texBindings[2].sampler = baseSampler;
+                texBindings[2].sampler = Utils::baseSampler;
 
                 // Binding 3: Occlusion
                 texBindings[3].texture = material->occlusionTexture ? material->occlusionTexture->texture : defaultWhiteTexture; // Use white (1.0) -> no occlusion
-                texBindings[3].sampler = baseSampler;
+                texBindings[3].sampler = Utils::baseSampler;
 
                 // Binding 4: Emissive
                 texBindings[4].texture = material->emissiveTexture ? material->emissiveTexture->texture : defaultBlackTexture; // Use black -> no emission
-                texBindings[4].sampler = baseSampler;
+                texBindings[4].sampler = Utils::baseSampler;
 
                 // Binding 5: Irradiance
                 texBindings[5].texture = irradianceTexture;
@@ -1850,6 +1796,13 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
     // end the render pass
     SDL_EndGPURenderPass(renderPass);
+
+    // bloom pass
+    postProcess->downsample(commandBuffer);
+    postProcess->upsample(commandBuffer);
+
+    // post process pass
+    postProcess->postProcess(commandBuffer, swapchainTexture);
 
     // render ui
     rootUI->render(commandBuffer, swapchainTexture);
@@ -1907,6 +1860,11 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
 
 void SDL_AppQuit(void *appstate, SDL_AppResult result)
 {
+    delete rootUI;
+    delete systemMonitorUI;
+
+    delete postProcess;
+
     for (const auto &model : loadedModels)
     {
         for (const auto &mesh : model->meshes)
@@ -1935,7 +1893,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
         delete material;
     }
 
-    SDL_ReleaseGPUSampler(device, baseSampler);
+    SDL_ReleaseGPUSampler(device, Utils::baseSampler);
     SDL_ReleaseGPUSampler(device, cubeSampler);
 
     if (defaultWhiteTexture)
@@ -1951,7 +1909,4 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
         SDL_DestroyGPUDevice(device);
     if (window)
         SDL_DestroyWindow(window);
-
-    delete rootUI;
-    delete systemMonitorUI;
 }

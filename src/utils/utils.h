@@ -13,7 +13,10 @@
 
 #endif
 
-class CommonUtil
+#include <SDL3/SDL_gpu.h>
+#include <SDL3/SDL_log.h>
+
+class Utils
 {
 public:
     static inline uint64_t getRamUsage()
@@ -91,5 +94,52 @@ public:
 #endif
 
         return path.substr(0, lastSeparator);
+    }
+
+    static SDL_GPUDevice *device;
+    static SDL_Window *window;
+    static SDL_GPUSampler *baseSampler;
+
+    static SDL_GPUShader *LoadShader(
+        const char *filepath,
+        Uint32 numSamplers,
+        Uint32 numUniformBuffers,
+        SDL_GPUShaderStage stage)
+    {
+#if defined(__APPLE__)
+        const SDL_GPUShaderFormat shaderFormat = SDL_GPU_SHADERFORMAT_METALLIB;
+        const char *entryPoint = "main0";
+        const char *extension = ".metallib";
+#else
+        const SDL_GPUShaderFormat shaderFormat = SDL_GPU_SHADERFORMAT_SPIRV;
+        const char *entryPoint = "main";
+        const char *extension = ".spv";
+#endif
+        std::string exePath = Utils::getExecutablePath();
+
+        size_t codeSize;
+        void *shaderCode = SDL_LoadFile(std::string(exePath + "/" + filepath + extension).c_str(), &codeSize);
+        if (!shaderCode)
+        {
+            SDL_Log("Failed to load shader!");
+            return NULL;
+        }
+
+        SDL_GPUShaderCreateInfo shaderInfo = {};
+        shaderInfo.code_size = codeSize;
+        shaderInfo.code = (Uint8 *)shaderCode;
+        shaderInfo.entrypoint = entryPoint;
+        shaderInfo.format = shaderFormat;
+        shaderInfo.stage = stage;
+        shaderInfo.num_samplers = numSamplers;
+        shaderInfo.num_storage_textures = 0;
+        shaderInfo.num_storage_buffers = 0;
+        shaderInfo.num_uniform_buffers = numUniformBuffers;
+
+        SDL_GPUShader *shader = SDL_CreateGPUShader(device, &shaderInfo);
+
+        SDL_free(shaderCode);
+
+        return shader;
     }
 };
