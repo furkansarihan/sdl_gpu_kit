@@ -11,7 +11,7 @@ PostProcess::PostProcess()
     m_fullscreenVert = Utils::LoadShader("src/shaders/fullscreen.vert", 0, 0, SDL_GPU_SHADERSTAGE_VERTEX);
     m_postProcessFrag = Utils::LoadShader("src/shaders/post.frag", 2, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
     m_bloomDownFrag = Utils::LoadShader("src/shaders/downsample.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
-    m_bloomUpFrag = Utils::LoadShader("src/shaders/upsample.frag", 2, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    m_bloomUpFrag = Utils::LoadShader("src/shaders/upsample.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
     SDL_GPUColorTargetDescription colorTargetDesc[1];
     colorTargetDesc[0] = {};
@@ -25,22 +25,47 @@ PostProcess::PostProcess()
     pp.target_info.color_target_descriptions = colorTargetDesc;
     m_postProcessPipeline = SDL_CreateGPUGraphicsPipeline(Utils::device, &pp);
 
-    colorTargetDesc[0].format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
+    colorTargetDesc[0].format = SDL_GPU_TEXTUREFORMAT_R11G11B10_UFLOAT;
     pp.target_info.color_target_descriptions = colorTargetDesc;
     pp.fragment_shader = m_bloomDownFrag;
     m_bloomDownPipeline = SDL_CreateGPUGraphicsPipeline(Utils::device, &pp);
 
+    // upsample - blend
+    colorTargetDesc[0].blend_state.enable_blend = true;
+    colorTargetDesc[0].blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
+    colorTargetDesc[0].blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+    colorTargetDesc[0].blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+    colorTargetDesc[0].blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+    colorTargetDesc[0].blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+    colorTargetDesc[0].blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+
     pp.fragment_shader = m_bloomUpFrag;
     m_bloomUpPipeline = SDL_CreateGPUGraphicsPipeline(Utils::device, &pp);
 
+    SDL_GPUSamplerCreateInfo samplerInfo{};
+    samplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
+    samplerInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
+    samplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
+    samplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    samplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    samplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    samplerInfo.enable_anisotropy = true;
+    samplerInfo.max_anisotropy = 16.0f;
+    samplerInfo.min_lod = 0.0f;
+    samplerInfo.max_lod = 1000.0f;
+    m_clampedSampler = SDL_CreateGPUSampler(Utils::device, &samplerInfo);
+
     m_UBO.exposure = 1.1f;
     m_UBO.gamma = 2.2f;
-    m_UBO.bloomIntensity = 0.1f;
+    m_UBO.bloomIntensity = 0.2f;
     m_skyUBO.lod = 0.f;
+    m_upsampleUBO.filterRadius = 1.;
+    m_downsampleUBO.highlight = 100.0f;
 }
 
 PostProcess::~PostProcess()
 {
+    SDL_ReleaseGPUSampler(Utils::device, m_clampedSampler);
     SDL_ReleaseGPUTexture(Utils::device, m_colorTexture);
     SDL_ReleaseGPUTexture(Utils::device, m_depthTexture);
 
@@ -64,9 +89,49 @@ void PostProcess::renderUI()
         ImGui::TreePop();
     }
 
-    ImGui::DragFloat("Exposure", &m_UBO.exposure, 0.01f, 0.f);
-    ImGui::DragFloat("Gamma", &m_UBO.gamma, 0.01f, 0.f);
-    ImGui::DragFloat("Bloom Intensity", &m_UBO.bloomIntensity, 0.01f, 0.f);
+    if (ImGui::TreeNode("Tone Mapping"))
+    {
+        ImGui::DragFloat("Exposure", &m_UBO.exposure, 0.01f, 0.f);
+        ImGui::DragFloat("Gamma", &m_UBO.gamma, 0.01f, 0.f);
+
+        ImGui::TreePop();
+    }
+
+    if (ImGui::TreeNode("Bloom"))
+    {
+        ImGui::DragFloat("Intensity", &m_UBO.bloomIntensity, 0.01f, 0.f);
+        ImGui::DragFloat("Filter Radius", &m_upsampleUBO.filterRadius, 0.001f, 0.f);
+        ImGui::DragFloat("Higlight", &m_downsampleUBO.highlight, 0.1f, 0.f);
+
+        if (ImGui::TreeNode("Mip Textures"))
+        {
+            for (int i = 0; i < BLOOM_MIPS; i++)
+            {
+                if (!m_bloomMip[i])
+                    continue;
+
+                ImGui::Text("Mip %d", i);
+                ImTextureID texID = (ImTextureID)(m_bloomMip[i]);
+                ImGui::Image(texID, ImVec2(m_UBO.screenSize.x * 0.2f, m_UBO.screenSize.y * 0.2f));
+
+                ImGui::Spacing();
+            }
+
+            ImGui::TreePop();
+        }
+
+        ImGui::TreePop();
+    }
+
+    if (ImGui::TreeNode("Textures"))
+    {
+        ImGui::Text("Color");
+        ImGui::Image((ImTextureID)(m_colorTexture), ImVec2(m_UBO.screenSize.x * 0.5f, m_UBO.screenSize.y * 0.5f));
+        ImGui::Text("Depth");
+        ImGui::Image((ImTextureID)(m_depthTexture), ImVec2(m_UBO.screenSize.x * 0.5f, m_UBO.screenSize.y * 0.5f));
+
+        ImGui::TreePop();
+    }
 }
 
 void PostProcess::update(glm::ivec2 screenSize)
@@ -74,13 +139,13 @@ void PostProcess::update(glm::ivec2 screenSize)
     m_UBO.screenSize = screenSize;
 
     static Uint32 lastW = 0, lastH = 0;
-    if (!m_colorTexture || lastW != screenSize.x || lastH != screenSize.y)
+    if (lastW != screenSize.x || lastH != screenSize.y)
     {
         if (m_colorTexture)
             SDL_ReleaseGPUTexture(Utils::device, m_colorTexture);
 
         SDL_GPUTextureCreateInfo rtInfo{};
-        rtInfo.format = SDL_GetGPUSwapchainTextureFormat(Utils::device, Utils::window);
+        rtInfo.format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
         rtInfo.width = screenSize.x;
         rtInfo.height = screenSize.y;
         rtInfo.num_levels = 1;
@@ -96,7 +161,7 @@ void PostProcess::update(glm::ivec2 screenSize)
                 SDL_ReleaseGPUTexture(Utils::device, m_bloomMip[i]);
 
             SDL_GPUTextureCreateInfo info{};
-            info.format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
+            info.format = SDL_GPU_TEXTUREFORMAT_R11G11B10_UFLOAT;
             info.width = screenSize.x >> i;
             info.height = screenSize.y >> i;
             info.num_levels = 1;
@@ -141,12 +206,17 @@ void PostProcess::downsample(SDL_GPUCommandBuffer *commandBuffer)
         {
             SDL_BindGPUGraphicsPipeline(rp, m_bloomDownPipeline);
 
-            SDL_GPUTextureSamplerBinding bind = {src, Utils::baseSampler};
+            m_downsampleUBO.mipLevel = i;
+            SDL_PushGPUFragmentUniformData(commandBuffer, 0, &m_downsampleUBO, sizeof(m_downsampleUBO));
+
+            SDL_GPUTextureSamplerBinding bind = {src, m_clampedSampler};
             SDL_BindGPUFragmentSamplers(rp, 0, &bind, 1);
 
             SDL_DrawGPUPrimitives(rp, 3, 1, 0, 0);
         }
         SDL_EndGPURenderPass(rp);
+
+        // SDL_GenerateMipmapsForGPUTexture(commandBuffer, rt.texture);
 
         src = m_bloomMip[i]; // next mip uses this one
     }
@@ -160,22 +230,21 @@ void PostProcess::upsample(SDL_GPUCommandBuffer *commandBuffer)
         rt.texture = m_bloomMip[i - 1];   // write to next bigger mip
         rt.load_op = SDL_GPU_LOADOP_LOAD; // keep existing bloom
         rt.store_op = SDL_GPU_STOREOP_STORE;
-        rt.clear_color = {1.f, 0.f, 1.f, 1.f};
 
         SDL_GPURenderPass *rp = SDL_BeginGPURenderPass(commandBuffer, &rt, 1, nullptr);
         {
             SDL_BindGPUGraphicsPipeline(rp, m_bloomUpPipeline);
 
-            SDL_GPUTextureSamplerBinding binds[2] =
-                {
-                    {m_bloomMip[i], Utils::baseSampler},    // smaller mip
-                    {m_bloomMip[i - 1], Utils::baseSampler} // current mip
-                };
-            SDL_BindGPUFragmentSamplers(rp, 0, binds, 2);
+            SDL_PushGPUFragmentUniformData(commandBuffer, 0, &m_upsampleUBO, sizeof(m_upsampleUBO));
+
+            SDL_GPUTextureSamplerBinding bind = {m_bloomMip[i], m_clampedSampler};
+            SDL_BindGPUFragmentSamplers(rp, 0, &bind, 1);
 
             SDL_DrawGPUPrimitives(rp, 3, 1, 0, 0);
         }
         SDL_EndGPURenderPass(rp);
+
+        // SDL_GenerateMipmapsForGPUTexture(commandBuffer, rt.texture);
     }
 }
 

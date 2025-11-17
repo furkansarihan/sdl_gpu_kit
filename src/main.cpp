@@ -1073,7 +1073,7 @@ SDL_GPUGraphicsPipeline *CreateSkyboxPipeline(SDL_GPUDevice *device)
 
     // Color target
     SDL_GPUColorTargetDescription colorTarget = {};
-    colorTarget.format = SDL_GetGPUSwapchainTextureFormat(device, window);
+    colorTarget.format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
 
     SDL_GPUGraphicsPipelineTargetInfo targetInfo = {};
     targetInfo.color_target_descriptions = &colorTarget;
@@ -1262,7 +1262,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     // describe the color target
     SDL_GPUColorTargetDescription colorTargetDescriptions[1];
     colorTargetDescriptions[0] = {};
-    colorTargetDescriptions[0].format = SDL_GetGPUSwapchainTextureFormat(device, window);
+    colorTargetDescriptions[0].format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
 
     pipelineInfo.target_info.num_color_targets = 1;
     pipelineInfo.target_info.color_target_descriptions = colorTargetDescriptions;
@@ -1363,6 +1363,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
         prefilterTexture = SDL_CreateGPUTexture(device, &cubemapInfo);
 
         const char *hdriPath = "/assets/hdris/kloofendal_43d_clear_2k.hdr";
+        // const char *hdriPath = "/assets/hdris/studio_small_03_1k.hdr";
         // const char *hdriPath = "/assets/hdris/TCom_IcelandGolfCourse_2K_hdri_sphere.hdr";
         hdrTexture = LoadHdrTexture(device, std::string(exePath + hdriPath).c_str());
     }

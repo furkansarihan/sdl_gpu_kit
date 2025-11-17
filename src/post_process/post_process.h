@@ -21,6 +21,19 @@ struct PostProcessFragmentUBO
     float padding[3];
 };
 
+struct BloomDownsampleUBO
+{
+    int mipLevel;
+    float highlight;
+    float padding[2];
+};
+
+struct BloomUpsampleUBO
+{
+    float filterRadius;
+    float padding[3];
+};
+
 class PostProcess : public BaseUI
 {
 public:
@@ -29,7 +42,10 @@ public:
 
     PostProcessFragmentUBO m_UBO;
     SkyboxFragmentUBO m_skyUBO;
+    BloomDownsampleUBO m_downsampleUBO;
+    BloomUpsampleUBO m_upsampleUBO;
 
+    SDL_GPUSampler *m_clampedSampler = nullptr;
     SDL_GPUTexture *m_colorTexture = nullptr;
     SDL_GPUTexture *m_depthTexture = nullptr;
 

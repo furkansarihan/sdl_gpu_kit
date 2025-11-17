@@ -12,5 +12,6 @@ void main() {
     vec2 pos = positions[gl_VertexIndex];
     vUV = pos * 0.5 + 0.5;     // full-screen UV
     vUV.y *= -1.0;
+    vUV.y = vUV.y + 1.0;
     gl_Position = vec4(pos, 0.0, 1.0);
 }
