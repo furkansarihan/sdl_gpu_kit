@@ -55,7 +55,9 @@ struct GTAOParamsUBO
     float thicknessHeuristic;
 
     float constThickness;
-    float padding2[3];
+    float nearPlane;
+    float farPlane;
+    float padding2;
 };
 
 class PostProcess : public BaseUI
@@ -105,6 +107,7 @@ public:
         SDL_GPUCommandBuffer *commandBuffer,
         const glm::mat4 &projectionMatrix,
         const glm::mat4 &viewMatrix,
+        float nearPlane,
         float farPlane);
     void postProcess(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTexture *swapchainTexture);
 };

@@ -271,6 +271,9 @@ void PostProcess::update(glm::ivec2 screenSize)
         depthInfo.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
         m_depthTexture = SDL_CreateGPUTexture(Utils::device, &depthInfo);
 
+        if (m_depthCopyTexture)
+            SDL_ReleaseGPUTexture(Utils::device, m_depthCopyTexture);
+
         SDL_GPUTextureCreateInfo depthCopyInfo{};
         depthCopyInfo.type = SDL_GPU_TEXTURETYPE_2D;
         depthCopyInfo.format = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
@@ -397,6 +400,7 @@ void PostProcess::computeGTAO(
     SDL_GPUCommandBuffer *commandBuffer,
     const glm::mat4 &projectionMatrix,
     const glm::mat4 &viewMatrix,
+    float nearPlane,
     float farPlane)
 {
     glm::mat4 invProj = glm::inverse(projectionMatrix);
@@ -423,6 +427,9 @@ void PostProcess::computeGTAO(
 
     // Always square AO result, as it looks much better - they said
     m_gtaoParams.power = m_gtaoPower * 2.0f;
+
+    m_gtaoParams.nearPlane = nearPlane;
+    m_gtaoParams.farPlane = farPlane;
 
     // 1. GTAO Generation Pass
     SDL_GPUColorTargetInfo genTarget{};

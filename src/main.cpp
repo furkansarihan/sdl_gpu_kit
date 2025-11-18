@@ -95,6 +95,8 @@ struct Camera
     glm::vec3 position = glm::vec3(0.0f, 0.0f, 3.0f);
     glm::vec3 front = glm::vec3(0.0f, 0.0f, -1.0f);
     glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
+    float near = 0.1f;
+    float far = 100.0f;
     float yaw = -90.0f;
     float pitch = 0.0f;
     float speed = 10.f;
@@ -1665,7 +1667,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
     // update common uniform data
     vertexUniforms.view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
-    vertexUniforms.projection = glm::perspectiveRH_ZO(glm::radians(45.0f), (float)width / (float)height, 0.1f, 100.0f);
+    vertexUniforms.projection = glm::perspectiveRH_ZO(glm::radians(45.0f), (float)width / (float)height, camera.near, camera.far);
     fragmentUniforms.viewPos = camera.position;
 
     // create the color target
@@ -1804,7 +1806,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     postProcess->copyDepth(commandBuffer);
 
     // ssao pass
-    postProcess->computeGTAO(commandBuffer, vertexUniforms.projection, vertexUniforms.view, 100.f);
+    postProcess->computeGTAO(commandBuffer, vertexUniforms.projection, vertexUniforms.view, camera.near, camera.far);
 
     // bloom pass
     postProcess->downsample(commandBuffer);

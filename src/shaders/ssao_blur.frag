@@ -7,6 +7,13 @@ layout(binding = 0) uniform sampler2D ssaoRaw;
 void main() {
     vec2 texelSize = 1.0 / vec2(textureSize(ssaoRaw, 0));
     float result = 0.0;
+
+    float depth = texture(ssaoRaw, gl_FragCoord.xy * texelSize).g;
+    if (depth >= 0.9999)
+    {
+        outColor = 1.0;
+        return;
+    }
     
     // Simple 4x4 Box Blur
     // Matches the noise texture dimension logic

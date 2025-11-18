@@ -24,7 +24,9 @@ layout(std140, binding = 0) uniform GTAOParams
     float thicknessHeuristic;
     
     float constThickness;
-    vec3  padding2;
+    float nearPlane;
+    float farPlane;
+    float padding2;
 } ubo;
 
 layout(binding = 0) uniform sampler2D depthTex;
@@ -53,14 +55,12 @@ float pack(float depth) {
     return depth;
 }
 
-const float NEAR_PLANE = 0.1;
-const float FAR_PLANE  = 100.0;
 float linearizeDepth(float depth)
 {
     // Convert [0,1] depth back to clip-space z
     float z = depth * 2.0 - 1.0; // back to NDC
-    return (2.0 * NEAR_PLANE * FAR_PLANE) /
-           (FAR_PLANE + NEAR_PLANE - z * (FAR_PLANE - NEAR_PLANE));
+    return (2.0 * ubo.nearPlane * ubo.farPlane) /
+           (ubo.farPlane + ubo.nearPlane - z * (ubo.farPlane - ubo.nearPlane));
     // This returns a positive view-space distance.
 }
 
@@ -270,6 +270,12 @@ void main() {
     float depth = texture(depthTex, uv).r;
     float z = linearizeDepth(depth);
     vec3 origin = computeViewSpacePositionFromDepth(uv, z, ubo.positionParams);
+
+    if (depth >= 0.9999)
+    {
+        outOcclusionAndDepth = vec2(1.0, pack(origin.z * ubo.invFarPlane));
+        return;
+    }
     
     vec3 normal = computeViewSpaceNormal(uv, depth, origin);
     
