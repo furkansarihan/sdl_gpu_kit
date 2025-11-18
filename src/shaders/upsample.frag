@@ -4,6 +4,10 @@ layout(location = 0) in vec2 vUV;
 
 layout(location = 0) out vec4 outColor;
 
+layout(binding = 0) uniform UpSampleUBO {
+    float filterRadius;
+} ubo;
+
 layout(binding = 0) uniform sampler2D uSource;
 
 void main()
@@ -14,8 +18,7 @@ void main()
     // Normalized UV in the *current render target* (same size as uSource in this pass)
     vec2 uv = vUV;
 
-    const float radius = 1.0;
-    vec4 d = vec4(invSize, -invSize) * radius;
+    vec4 d = vec4(invSize, -invSize) * ubo.filterRadius;
 
     vec3 c0 = vec3(0.0);
     c0  = textureLod(uSource, uv + d.zw, 0.0).rgb;

@@ -1665,7 +1665,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
     // update common uniform data
     vertexUniforms.view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
-    vertexUniforms.projection = glm::perspectiveRH_ZO(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000.0f);
+    vertexUniforms.projection = glm::perspectiveRH_ZO(glm::radians(45.0f), (float)width / (float)height, 0.1f, 100.0f);
     fragmentUniforms.viewPos = camera.position;
 
     // create the color target
@@ -1680,7 +1680,9 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     depthInfo.texture = postProcess->m_depthTexture;
     depthInfo.clear_depth = 1.0f;
     depthInfo.load_op = SDL_GPU_LOADOP_CLEAR;
-    depthInfo.store_op = SDL_GPU_STOREOP_DONT_CARE;
+    depthInfo.store_op = SDL_GPU_STOREOP_STORE;
+    depthInfo.stencil_load_op = SDL_GPU_LOADOP_CLEAR;
+    depthInfo.stencil_store_op = SDL_GPU_STOREOP_STORE;
 
     // begin a render pass
     SDL_GPURenderPass *renderPass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, &depthInfo);
@@ -1797,6 +1799,12 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
     // end the render pass
     SDL_EndGPURenderPass(renderPass);
+
+    // contruct depth
+    postProcess->copyDepth(commandBuffer);
+
+    // ssao pass
+    postProcess->computeGTAO(commandBuffer, vertexUniforms.projection, vertexUniforms.view, 100.f);
 
     // bloom pass
     postProcess->downsample(commandBuffer);

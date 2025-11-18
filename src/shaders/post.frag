@@ -11,6 +11,7 @@ layout(binding = 0) uniform PostProcessFragmentUBO {
 
 layout(binding = 0) uniform sampler2D sceneTex;
 layout(binding = 1) uniform sampler2D bloomTex;
+layout(binding = 2) uniform sampler2D ssaoTex; 
 
 // ACES filmic tone mapping curve
 // Source: https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/
@@ -74,11 +75,19 @@ vec3 fxaa(sampler2D tex, vec2 uv, vec2 screenSize) {
 
 void main() {
     vec2 uv = gl_FragCoord.xy / vec2(textureSize(sceneTex, 0));
-    vec3 s = fxaa(sceneTex, uv, ubo.screenSize);
-    vec3 bloomRaw = texture(bloomTex, uv).rgb;
-    vec3 color = vec3(s + bloomRaw * ubo.bloomIntensity);
 
-    // Apply exposure
+    // FXAA
+    vec3 color = fxaa(sceneTex, uv, ubo.screenSize);
+
+    // SSAO
+    float aoFactor = texture(ssaoTex, uv).r;
+    color *= aoFactor; 
+
+    // Bloom
+    vec3 bloomRaw = texture(bloomTex, uv).rgb;
+    color += bloomRaw * ubo.bloomIntensity;
+
+    // Exposure
     color *= ubo.exposure;
 
     // Tone Mapping

@@ -1,7 +1,7 @@
 #include "post_process.h"
 
+#include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/type_ptr.hpp>
-
 #include <imgui.h>
 
 #include "../utils/utils.h"
@@ -9,9 +9,14 @@
 PostProcess::PostProcess()
 {
     m_fullscreenVert = Utils::LoadShader("src/shaders/fullscreen.vert", 0, 0, SDL_GPU_SHADERSTAGE_VERTEX);
-    m_postProcessFrag = Utils::LoadShader("src/shaders/post.frag", 2, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    m_postProcessFrag = Utils::LoadShader("src/shaders/post.frag", 3, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
     m_bloomDownFrag = Utils::LoadShader("src/shaders/downsample.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
     m_bloomUpFrag = Utils::LoadShader("src/shaders/upsample.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
+
+    // Load GTAO Shaders (replaces SSAO)
+    m_gtaoGenFrag = Utils::LoadShader("src/shaders/gtao.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    m_gtaoBlurFrag = Utils::LoadShader("src/shaders/ssao_blur.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    m_depthCopyFrag = Utils::LoadShader("src/shaders/depth_copy.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
     SDL_GPUColorTargetDescription colorTargetDesc[1];
     colorTargetDesc[0] = {};
@@ -42,6 +47,40 @@ PostProcess::PostProcess()
     pp.fragment_shader = m_bloomUpFrag;
     m_bloomUpPipeline = SDL_CreateGPUGraphicsPipeline(Utils::device, &pp);
 
+    // depth copy
+    SDL_GPUGraphicsPipelineCreateInfo pp1{};
+    pp1.vertex_shader = m_fullscreenVert;
+    pp1.fragment_shader = m_depthCopyFrag;
+    pp1.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+
+    SDL_GPUColorTargetDescription colorOut{};
+    colorOut.format = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
+
+    pp1.target_info.num_color_targets = 1;
+    pp1.target_info.color_target_descriptions = &colorOut;
+
+    m_depthCopyPipeline = SDL_CreateGPUGraphicsPipeline(Utils::device, &pp1);
+
+    // 1. GTAO Generation Pipeline (Output: RG8 or RG16F)
+    SDL_GPUColorTargetDescription gtaoTargetDesc{};
+    gtaoTargetDesc.format = SDL_GPU_TEXTUREFORMAT_R8G8_UNORM; // R=visibility, G=packed depth
+
+    SDL_GPUGraphicsPipelineCreateInfo gtaoPP{};
+    gtaoPP.vertex_shader = m_fullscreenVert;
+    gtaoPP.fragment_shader = m_gtaoGenFrag;
+    gtaoPP.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    gtaoPP.target_info.num_color_targets = 1;
+    gtaoPP.target_info.color_target_descriptions = &gtaoTargetDesc;
+    m_gtaoGenPipeline = SDL_CreateGPUGraphicsPipeline(Utils::device, &gtaoPP);
+
+    // 2. GTAO Blur Pipeline (can reuse SSAO blur shader)
+    SDL_GPUColorTargetDescription blurTargetDesc{};
+    blurTargetDesc.format = SDL_GPU_TEXTUREFORMAT_R8_UNORM; // Just the visibility channel
+
+    gtaoPP.fragment_shader = m_gtaoBlurFrag;
+    gtaoPP.target_info.color_target_descriptions = &blurTargetDesc;
+    m_gtaoBlurPipeline = SDL_CreateGPUGraphicsPipeline(Utils::device, &gtaoPP);
+
     SDL_GPUSamplerCreateInfo samplerInfo{};
     samplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
     samplerInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
@@ -61,6 +100,17 @@ PostProcess::PostProcess()
     m_skyUBO.lod = 0.f;
     m_upsampleUBO.filterRadius = 1.;
     m_downsampleUBO.highlight = 100.0f;
+
+    {
+        m_gtaoParams.intensity = 1.0f;
+        m_gtaoParams.radius = 0.4f;
+        m_gtaoPower = 1.0f;
+        m_gtaoParams.thicknessHeuristic = 0.0f;
+        m_gtaoParams.constThickness = 0.1f;
+        m_gtaoParams.sliceCount = glm::vec2(4.0f, 1.0f / 4.0f); // 4 slices
+        m_gtaoParams.stepsPerSlice = 4.0f;
+        m_gtaoParams.maxLevel = 0; // Mip level for depth sampling
+    }
 }
 
 PostProcess::~PostProcess()
@@ -68,6 +118,8 @@ PostProcess::~PostProcess()
     SDL_ReleaseGPUSampler(Utils::device, m_clampedSampler);
     SDL_ReleaseGPUTexture(Utils::device, m_colorTexture);
     SDL_ReleaseGPUTexture(Utils::device, m_depthTexture);
+    SDL_ReleaseGPUTexture(Utils::device, m_gtaoRawTexture);
+    SDL_ReleaseGPUTexture(Utils::device, m_gtaoBlurTexture);
 
     for (int i = 0; i < BLOOM_MIPS; i++)
         SDL_ReleaseGPUTexture(Utils::device, m_bloomMip[i]);
@@ -75,6 +127,8 @@ PostProcess::~PostProcess()
     SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_postProcessPipeline);
     SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_bloomDownPipeline);
     SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_bloomUpPipeline);
+    SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_gtaoGenPipeline);
+    SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_gtaoBlurPipeline);
 }
 
 void PostProcess::renderUI()
@@ -116,9 +170,40 @@ void PostProcess::renderUI()
 
                 ImGui::Spacing();
             }
+            ImGui::TreePop();
+        }
+        ImGui::TreePop();
+    }
+
+    if (ImGui::TreeNode("GTAO"))
+    // if (ImGui::TreeNodeEx("GTAO", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        ImGui::DragFloat("Intensity", &m_gtaoParams.intensity, 0.01f, 0.0f, 4.0f);
+        ImGui::DragFloat("Radius", &m_gtaoParams.radius, 0.01f, 0.f, 5.0f);
+        ImGui::DragFloat("Power", &m_gtaoPower, 0.1f, 0.f, 10.0f);
+
+        if (ImGui::TreeNode("Advanced"))
+        {
+            int slices = (int)m_gtaoParams.sliceCount.x;
+            if (ImGui::SliderInt("Slices", &slices, 1, 8))
+            {
+                m_gtaoParams.sliceCount = glm::vec2(slices, 1.0f / slices);
+            }
+
+            ImGui::DragFloat("Steps Per Slice", &m_gtaoParams.stepsPerSlice, 0.5f, 1.0f, 16.0f);
+            ImGui::DragFloat("Thickness Heuristic", &m_gtaoParams.thicknessHeuristic, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Const Thickness", &m_gtaoParams.constThickness, 0.01f, 0.0f, 1.0f);
 
             ImGui::TreePop();
         }
+
+        ImGui::Text("GTAO - Raw");
+        if (m_gtaoRawTexture)
+            ImGui::Image((ImTextureID)(m_gtaoRawTexture), ImVec2(m_UBO.screenSize.x * 0.2f, m_UBO.screenSize.y * 0.2f));
+
+        ImGui::Text("GTAO - Blur");
+        if (m_gtaoBlurTexture)
+            ImGui::Image((ImTextureID)(m_gtaoBlurTexture), ImVec2(m_UBO.screenSize.x * 0.2f, m_UBO.screenSize.y * 0.2f));
 
         ImGui::TreePop();
     }
@@ -126,10 +211,11 @@ void PostProcess::renderUI()
     if (ImGui::TreeNode("Textures"))
     {
         ImGui::Text("Color");
-        ImGui::Image((ImTextureID)(m_colorTexture), ImVec2(m_UBO.screenSize.x * 0.5f, m_UBO.screenSize.y * 0.5f));
-        ImGui::Text("Depth");
-        ImGui::Image((ImTextureID)(m_depthTexture), ImVec2(m_UBO.screenSize.x * 0.5f, m_UBO.screenSize.y * 0.5f));
-
+        ImGui::Image((ImTextureID)(m_colorTexture), ImVec2(m_UBO.screenSize.x * 0.2f, m_UBO.screenSize.y * 0.2f));
+        // ImGui::Text("Depth");
+        // ImGui::Image((ImTextureID)(m_depthTexture), ImVec2(m_UBO.screenSize.x * 0.2f, m_UBO.screenSize.y * 0.2f));
+        ImGui::Text("Depth - Copy");
+        ImGui::Image((ImTextureID)(m_depthCopyTexture), ImVec2(m_UBO.screenSize.x * 0.2f, m_UBO.screenSize.y * 0.2f));
         ImGui::TreePop();
     }
 }
@@ -184,6 +270,42 @@ void PostProcess::update(glm::ivec2 screenSize)
         depthInfo.num_levels = 1;
         depthInfo.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
         m_depthTexture = SDL_CreateGPUTexture(Utils::device, &depthInfo);
+
+        SDL_GPUTextureCreateInfo depthCopyInfo{};
+        depthCopyInfo.type = SDL_GPU_TEXTURETYPE_2D;
+        depthCopyInfo.format = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
+        depthCopyInfo.width = screenSize.x;
+        depthCopyInfo.height = screenSize.y;
+        depthCopyInfo.num_levels = 1;
+        depthCopyInfo.layer_count_or_depth = 1;
+        depthCopyInfo.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+
+        m_depthCopyTexture = SDL_CreateGPUTexture(Utils::device, &depthCopyInfo);
+
+        if (m_gtaoRawTexture)
+            SDL_ReleaseGPUTexture(Utils::device, m_gtaoRawTexture);
+        if (m_gtaoBlurTexture)
+            SDL_ReleaseGPUTexture(Utils::device, m_gtaoBlurTexture);
+
+        SDL_GPUTextureCreateInfo gtaoRawInfo{};
+        gtaoRawInfo.format = SDL_GPU_TEXTUREFORMAT_R8G8_UNORM; // RG for visibility + packed depth
+        gtaoRawInfo.width = screenSize.x;
+        gtaoRawInfo.height = screenSize.y;
+        gtaoRawInfo.num_levels = 1;
+        gtaoRawInfo.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+
+        m_gtaoRawTexture = SDL_CreateGPUTexture(Utils::device, &gtaoRawInfo);
+        SDL_SetGPUTextureName(Utils::device, m_gtaoRawTexture, "GTAO Raw");
+
+        SDL_GPUTextureCreateInfo gtaoBlurInfo{};
+        gtaoBlurInfo.format = SDL_GPU_TEXTUREFORMAT_R8_UNORM; // Just visibility
+        gtaoBlurInfo.width = screenSize.x;
+        gtaoBlurInfo.height = screenSize.y;
+        gtaoBlurInfo.num_levels = 1;
+        gtaoBlurInfo.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+
+        m_gtaoBlurTexture = SDL_CreateGPUTexture(Utils::device, &gtaoBlurInfo);
+        SDL_SetGPUTextureName(Utils::device, m_gtaoBlurTexture, "GTAO Blur");
 
         lastW = screenSize.x;
         lastH = screenSize.y;
@@ -248,6 +370,100 @@ void PostProcess::upsample(SDL_GPUCommandBuffer *commandBuffer)
     }
 }
 
+void PostProcess::copyDepth(SDL_GPUCommandBuffer *cmd)
+{
+    SDL_GPUColorTargetInfo target{};
+    target.texture = m_depthCopyTexture;
+    target.clear_color = {0, 0, 0, 0};
+    target.load_op = SDL_GPU_LOADOP_CLEAR;
+    target.store_op = SDL_GPU_STOREOP_STORE;
+
+    SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &target, 1, nullptr);
+
+    SDL_BindGPUGraphicsPipeline(pass, m_depthCopyPipeline);
+
+    SDL_GPUTextureSamplerBinding binding{};
+    binding.texture = m_depthTexture;
+    binding.sampler = m_clampedSampler;
+
+    SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+
+    SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+
+    SDL_EndGPURenderPass(pass);
+}
+
+void PostProcess::computeGTAO(
+    SDL_GPUCommandBuffer *commandBuffer,
+    const glm::mat4 &projectionMatrix,
+    const glm::mat4 &viewMatrix,
+    float farPlane)
+{
+    glm::mat4 invProj = glm::inverse(projectionMatrix);
+
+    m_gtaoParams.resolution = glm::vec4(
+        m_UBO.screenSize.x,
+        m_UBO.screenSize.y,
+        1.0f / m_UBO.screenSize.x,
+        1.0f / m_UBO.screenSize.y);
+
+    m_gtaoParams.positionParams = glm::vec2(
+        invProj[0][0] * 2.0f,
+        invProj[1][1] * 2.0f);
+
+    m_gtaoParams.invFarPlane = 1.0f / farPlane;
+
+    // Calculate projection scale for screen-space radius
+    float fov = 2.0f * atan(1.0f / projectionMatrix[1][1]);
+    m_gtaoParams.projectionScale = m_UBO.screenSize.y / (2.0f * tan(fov * 0.5f));
+
+    // Calculate derived values
+    m_gtaoParams.invRadiusSquared = 1.0f / (m_gtaoParams.radius * m_gtaoParams.radius);
+    m_gtaoParams.projectionScaleRadius = m_gtaoParams.projectionScale * m_gtaoParams.radius;
+
+    // Always square AO result, as it looks much better - they said
+    m_gtaoParams.power = m_gtaoPower * 2.0f;
+
+    // 1. GTAO Generation Pass
+    SDL_GPUColorTargetInfo genTarget{};
+    genTarget.texture = m_gtaoRawTexture;
+    genTarget.load_op = SDL_GPU_LOADOP_CLEAR;
+    genTarget.store_op = SDL_GPU_STOREOP_STORE;
+
+    SDL_GPURenderPass *genPass = SDL_BeginGPURenderPass(commandBuffer, &genTarget, 1, nullptr);
+    {
+        SDL_BindGPUGraphicsPipeline(genPass, m_gtaoGenPipeline);
+
+        // Bind Depth texture
+        SDL_GPUTextureSamplerBinding depthBind = {m_depthCopyTexture, m_clampedSampler};
+        SDL_BindGPUFragmentSamplers(genPass, 0, &depthBind, 1);
+
+        // Push GTAO parameters
+        SDL_PushGPUFragmentUniformData(commandBuffer, 0, &m_gtaoParams, sizeof(m_gtaoParams));
+
+        SDL_DrawGPUPrimitives(genPass, 3, 1, 0, 0);
+    }
+    SDL_EndGPURenderPass(genPass);
+
+    // 2. GTAO Blur Pass
+    SDL_GPUColorTargetInfo blurTarget{};
+    blurTarget.texture = m_gtaoBlurTexture;
+    blurTarget.load_op = SDL_GPU_LOADOP_CLEAR;
+    blurTarget.store_op = SDL_GPU_STOREOP_STORE;
+
+    SDL_GPURenderPass *blurPass = SDL_BeginGPURenderPass(commandBuffer, &blurTarget, 1, nullptr);
+    {
+        SDL_BindGPUGraphicsPipeline(blurPass, m_gtaoBlurPipeline);
+
+        // Bind Raw GTAO (only need R channel for blur)
+        SDL_GPUTextureSamplerBinding input = {m_gtaoRawTexture, m_clampedSampler};
+        SDL_BindGPUFragmentSamplers(blurPass, 0, &input, 1);
+
+        SDL_DrawGPUPrimitives(blurPass, 3, 1, 0, 0);
+    }
+    SDL_EndGPURenderPass(blurPass);
+}
+
 void PostProcess::postProcess(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTexture *swapchainTexture)
 {
     SDL_GPUColorTargetInfo finalTarget{};
@@ -260,12 +476,13 @@ void PostProcess::postProcess(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTextur
     {
         SDL_BindGPUGraphicsPipeline(finalPass, m_postProcessPipeline);
 
-        SDL_GPUTextureSamplerBinding inputs[2] =
+        SDL_GPUTextureSamplerBinding inputs[3] =
             {
                 {m_colorTexture, Utils::baseSampler},
                 {m_bloomMip[0], Utils::baseSampler},
+                {m_gtaoBlurTexture, Utils::baseSampler},
             };
-        SDL_BindGPUFragmentSamplers(finalPass, 0, inputs, 2);
+        SDL_BindGPUFragmentSamplers(finalPass, 0, inputs, 3);
 
         SDL_PushGPUFragmentUniformData(commandBuffer, 0, &m_UBO, sizeof(m_UBO));
 
