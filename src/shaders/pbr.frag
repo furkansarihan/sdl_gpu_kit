@@ -44,7 +44,6 @@ layout(binding = 6) uniform samplerCube prefilterMap;
 layout(binding = 7) uniform sampler2D brdfLUT;
 
 const float PI = 3.14159265359;
-const float MAX_REFLECTION_LOD = 4.0;
 
 float DistributionGGX(vec3 N, vec3 H, float roughness)
 {
@@ -200,7 +199,9 @@ void main()
     vec3 kD = 1.0 - kS;
     kD *= 1.0 - metallic;
 
-    vec3 prefilteredColor = textureLod(prefilterMap, R, roughness * MAX_REFLECTION_LOD).rgb;
+    float maxLod = float(textureQueryLevels(prefilterMap) - 1);
+    float lod = roughness * maxLod;
+    vec3 prefilteredColor = textureLod(prefilterMap, R, lod).rgb;
     vec2 envBRDF = texture(brdfLUT, vec2(max(dot(N, V), 0.0), roughness)).rg;
     vec3 specular = prefilteredColor * (F * envBRDF.x + envBRDF.y);
 
@@ -210,20 +211,26 @@ void main()
     vec3 color = ambient + Lo;
 
     outColor = vec4(color, 1.0);
-    // outColor = vec4(emissive, 1.0);
+    // outColor = vec4(irradiance, 1.0);
+    // outColor = vec4(diffuse, 1.0);
+    // outColor = vec4(ambient, 1.0);
+    // outColor = vec4(specular, 1.0);
     // outColor = vec4(albedo, 1.0);
     // outColor = vec4(N, 1.0);
     // outColor = vec4(fragTangent, 1.0);
     // outColor = vec4(vec3(envBRDF.x), 1.0);
     // outColor = vec4(vec3(envBRDF.y), 1.0);
+    // outColor = vec4(vec3(envBRDF.xy, 0.0), 1.0);
+    // outColor = vec4(vec3(F), 1.0);
     // outColor = vec4(vec3(roughness), 1.0);
     // outColor = vec4(vec3(metallic), 1.0);
-
+    // outColor = vec4(prefilteredColor, 1.0);
     // outColor = vec4(texture(albedoMap, uv).rgb, 1.0);
     // outColor = vec4(texture(emissiveMap, uv).rgb, 1.0);
     // outColor = vec4(textureLod(irradianceMap, N, 0).rgb, 1.0);
     // outColor = vec4(textureLod(irradianceMap, fragNormal, 0).rgb, 1.0);
     // outColor = vec4(textureLod(prefilterMap, N, 0).rgb, 1.0);
+    // outColor = vec4(textureLod(prefilterMap, R, 0).rgb, 1.0);
     // outColor = vec4(texture(brdfLUT, N.xy).rgb, 1.0);
     
     // outColor = vec4(textureLod(albedoMap, uv, 0.0).rgb, 1.0);

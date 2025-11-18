@@ -11,6 +11,7 @@ layout(binding = 0) uniform SkyboxFragmentUBO {
 layout(binding = 0) uniform samplerCube environmentMap;
 
 void main() {
-    vec3 color = textureLod(environmentMap, fragTexCoord, ubo.lod).rgb;
+    vec3 dir = normalize(fragTexCoord);
+    vec3 color = textureLod(environmentMap, dir, ubo.lod).rgb;
     outColor = vec4(color, 1.0);
 }

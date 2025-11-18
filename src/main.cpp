@@ -96,7 +96,7 @@ struct Camera
     glm::vec3 front = glm::vec3(0.0f, 0.0f, -1.0f);
     glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
     float near = 0.1f;
-    float far = 100.0f;
+    float far = 1000.0f;
     float yaw = -90.0f;
     float pitch = 0.0f;
     float speed = 10.f;
@@ -115,6 +115,9 @@ SDL_GPUGraphicsPipeline *cubemapPipeline;
 SDL_GPUGraphicsPipeline *irradiancePipeline;
 SDL_GPUGraphicsPipeline *prefilterPipeline;
 SDL_GPUGraphicsPipeline *skyboxPipeline;
+
+int m_prefilterMipLevels = 5;
+int m_prefilterSize = 128;
 
 SDL_GPUSampler *hdrSampler;
 SDL_GPUSampler *brdfSampler;
@@ -970,7 +973,7 @@ SDL_GPUTexture *LoadHdrTexture(SDL_GPUDevice *device, const char *filepath)
     texInfo.width = width;
     texInfo.height = height;
     texInfo.layer_count_or_depth = 1;
-    texInfo.num_levels = 1;
+    texInfo.num_levels = CalcMipLevels(width, height);
 
     // 3. Calculate the correct buffer size: width * height * components * type_size
     // We forced 4 components (RGBA) and the type is float (4 bytes)
@@ -1218,6 +1221,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     cubeSamplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
     cubeSamplerInfo.enable_anisotropy = true;
     cubeSamplerInfo.max_anisotropy = 16.0f;
+    cubeSamplerInfo.min_lod = 0.0f;
+    cubeSamplerInfo.max_lod = (float)(m_prefilterMipLevels - 1);
     cubeSampler = SDL_CreateGPUSampler(device, &cubeSamplerInfo);
     if (!cubeSampler)
     {
@@ -1225,10 +1230,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
         return SDL_APP_FAILURE;
     }
 
-    cubeSamplerInfo.min_lod = 0.0f;
-    cubeSamplerInfo.max_lod = 100.0f;
     skySampler = SDL_CreateGPUSampler(device, &cubeSamplerInfo);
-    if (!cubeSampler)
+    if (!skySampler)
     {
         SDL_Log("Failed to create sky sampler: %s", SDL_GetError());
         return SDL_APP_FAILURE;
@@ -1302,9 +1305,6 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     fragmentUniforms.lightDir = glm::normalize(glm::vec3(-0.3f, -0.8f, -0.3f));
     fragmentUniforms.lightColor = glm::vec3(1.0f) * 6.0f;
     fragmentUniforms.exposure = 1.0f;
-
-    int m_prefilterMipLevels = 5;
-    int m_prefilterSize = 128;
 
     ModelData *quadModel = LoadGLTFModel(std::string(exePath + "/assets/models/quad.glb").c_str());
     // loadedModels.push_back(quadModel);
@@ -1486,7 +1486,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
         colorTargetInfo.mip_level = 0;
         colorTargetInfo.load_op = SDL_GPU_LOADOP_CLEAR;
         colorTargetInfo.store_op = SDL_GPU_STOREOP_STORE;
-        colorTargetInfo.clear_color = {0.0f, 1.0f, 0.0f, 1.0f};
+        colorTargetInfo.clear_color = {0.0f, 0.0f, 0.0f, 1.0f};
 
         SDL_GPUViewport viewport = {0, 0, (float)64, (float)64, 0.0f, 1.0f};
 
@@ -1522,6 +1522,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
             }
             SDL_EndGPURenderPass(pass);
         }
+
+        SDL_GenerateMipmapsForGPUTexture(cmdbuf, irradianceTexture);
 
         SDL_GPUFence *initFence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmdbuf);
         SDL_WaitForGPUFences(device, true, &initFence, 1);
@@ -1695,7 +1697,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
         renderPass,
         skyboxPipeline,
         &cubeModel->meshes[0].primitives[0],
-        glm::lookAt(center, center + camera.front, camera.up),
+        vertexUniforms.view,
         vertexUniforms.projection,
         cubemapTexture, // Or prefilterMap, or irradianceMap
         skySampler);

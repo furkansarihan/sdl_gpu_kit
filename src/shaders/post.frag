@@ -6,7 +6,9 @@ layout(binding = 0) uniform PostProcessFragmentUBO {
     vec2 screenSize;
     float exposure;
     float gamma;
+
     float bloomIntensity;
+    vec3 padding;
 } ubo;
 
 layout(binding = 0) uniform sampler2D sceneTex;
