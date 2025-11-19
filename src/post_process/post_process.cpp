@@ -216,6 +216,7 @@ void PostProcess::renderUI()
         // ImGui::Image((ImTextureID)(m_depthTexture), ImVec2(m_UBO.screenSize.x * 0.2f, m_UBO.screenSize.y * 0.2f));
         ImGui::Text("Depth - Copy");
         ImGui::Image((ImTextureID)(m_depthCopyTexture), ImVec2(m_UBO.screenSize.x * 0.2f, m_UBO.screenSize.y * 0.2f));
+
         ImGui::TreePop();
     }
 }
