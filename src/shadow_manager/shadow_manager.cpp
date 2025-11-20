@@ -5,7 +5,7 @@
 
 #include <imgui.h>
 
-#include "../mesh.h"
+#include "../resource_manager/resource_manager.h"
 #include "../utils/utils.h"
 
 // --- Cascaded shadow map texture (2D array) ---
@@ -45,8 +45,8 @@ ShadowManager::ShadowManager()
 
     // --- Shadow map graphics pipeline ---
     {
-        SDL_GPUShader *shadowVert = Utils::LoadShader("src/shaders/shadow_csm.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
-        SDL_GPUShader *shadowFrag = Utils::LoadShader("src/shaders/shadow_csm.frag", 0, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
+        SDL_GPUShader *shadowVert = Utils::loadShader("src/shaders/shadow_csm.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
+        SDL_GPUShader *shadowFrag = Utils::loadShader("src/shaders/shadow_csm.frag", 0, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
         SDL_GPUGraphicsPipelineCreateInfo shadowInfo{};
         shadowInfo.vertex_shader = shadowVert;

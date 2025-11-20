@@ -8,15 +8,15 @@
 
 PostProcess::PostProcess()
 {
-    m_fullscreenVert = Utils::LoadShader("src/shaders/fullscreen.vert", 0, 0, SDL_GPU_SHADERSTAGE_VERTEX);
-    m_postProcessFrag = Utils::LoadShader("src/shaders/post.frag", 3, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
-    m_bloomDownFrag = Utils::LoadShader("src/shaders/downsample.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
-    m_bloomUpFrag = Utils::LoadShader("src/shaders/upsample.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    m_fullscreenVert = Utils::loadShader("src/shaders/fullscreen.vert", 0, 0, SDL_GPU_SHADERSTAGE_VERTEX);
+    m_postProcessFrag = Utils::loadShader("src/shaders/post.frag", 3, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    m_bloomDownFrag = Utils::loadShader("src/shaders/downsample.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    m_bloomUpFrag = Utils::loadShader("src/shaders/upsample.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
     // Load GTAO Shaders (replaces SSAO)
-    m_gtaoGenFrag = Utils::LoadShader("src/shaders/gtao.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
-    m_gtaoBlurFrag = Utils::LoadShader("src/shaders/ssao_blur.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
-    m_depthCopyFrag = Utils::LoadShader("src/shaders/depth_copy.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    m_gtaoGenFrag = Utils::loadShader("src/shaders/gtao.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    m_gtaoBlurFrag = Utils::loadShader("src/shaders/ssao_blur.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    m_depthCopyFrag = Utils::loadShader("src/shaders/depth_copy.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
     SDL_GPUColorTargetDescription colorTargetDesc[1];
     colorTargetDesc[0] = {};
@@ -269,7 +269,7 @@ void PostProcess::update(glm::ivec2 screenSize)
         depthInfo.height = screenSize.y;
         depthInfo.layer_count_or_depth = 1;
         depthInfo.num_levels = 1;
-        depthInfo.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
+        depthInfo.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
         m_depthTexture = SDL_CreateGPUTexture(Utils::device, &depthInfo);
 
         if (m_depthCopyTexture)

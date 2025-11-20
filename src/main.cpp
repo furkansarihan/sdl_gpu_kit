@@ -1,6 +1,5 @@
 #include <cmath>
 #include <cstring>
-#include <map>
 #include <string>
 #include <vector>
 
@@ -35,8 +34,8 @@
 #include "post_process/post_process.h"
 #include "shadow_manager/shadow_manager.h"
 
-#include "mesh.h"
 #include "camera.h"
+#include "resource_manager/resource_manager.h"
 
 struct VertexUniforms
 {
@@ -114,102 +113,28 @@ bool mouseButtons[6]{};
 float deltaTime = 0.0f;
 Uint64 lastFrame = 0;
 
-struct PrimitiveData
-{
-    std::vector<Vertex> vertices;
-    std::vector<uint32_t> indices;
-    std::string name;
-    int materialIndex = -1; // Index into loadedMaterials
-
-    SDL_GPUBuffer *vertexBuffer = NULL;
-    SDL_GPUBuffer *indexBuffer = NULL;
-    SDL_GPUTransferBuffer *vertexTransferBuffer = NULL;
-    SDL_GPUTransferBuffer *indexTransferBuffer = NULL;
-};
-
-struct MeshData
-{
-    std::vector<PrimitiveData> primitives;
-};
-
-struct NodeData
-{
-    glm::mat4 localTransform; // Local transformation matrix
-    glm::mat4 worldTransform; // World transformation matrix
-    std::string name;
-    int meshIndex; // Index of mesh attached to this node (-1 if none)
-};
-
-struct ModelData
-{
-    std::vector<NodeData> nodes;
-    std::vector<MeshData> meshes;
-    int baseMaterialIndex = 0; // Offset in the global loadedMaterials vector
-    int baseTextureIndex = 0;  // Offset in the global loadedTextures vector
-};
-
-struct Texture
-{
-    SDL_GPUTexture *texture = nullptr;
-    SDL_GPUSampler *sampler = nullptr;
-    int width, height, nrComponents;
-    glm::vec2 uvScale = glm::vec2(1.f);
-};
-
-class Material
-{
-public:
-    std::string name;
-
-    Texture *albedoTexture = nullptr;
-    Texture *normalTexture = nullptr;
-    Texture *metallicRoughnessTexture = nullptr;
-    Texture *occlusionTexture = nullptr;
-    Texture *emissiveTexture = nullptr;
-
-    glm::vec2 uvScale;
-    glm::vec4 albedo;
-    float roughness;
-    float metallic;
-    float opacity;
-    glm::vec4 emissiveColor; // (r, g, b, strength) - strength in alpha
-
-    Material(const std::string &name)
-        : name(name),
-          uvScale(glm::vec2(1.f)),
-          albedo(glm::vec4(1.f)),
-          metallic(0.f),
-          roughness(1.f),
-          opacity(1.f),
-          emissiveColor(glm::vec4(0.f, 0.f, 0.f, 0.f))
-    {
-    }
-};
-
 // Global resource vectors
 std::vector<ModelData *> loadedModels;
-std::vector<Material *> loadedMaterials;
-std::vector<Texture *> loadedTextures;
 SDL_GPUSampler *cubeSampler;
 SDL_GPUSampler *skySampler;
 
 // Default resources
-SDL_GPUTexture *defaultWhiteTexture = nullptr;
-SDL_GPUTexture *defaultBlackTexture = nullptr;
-SDL_GPUTexture *defaultNormalTexture = nullptr;
-Material *defaultMaterial = nullptr;
+SDL_GPUTexture *defaultTexture = nullptr;
+Material defaultMaterial("default");
 
-SDL_GPUTexture *hdrTexture = nullptr;
+Texture hdrTexture;
 SDL_GPUTexture *brdfTexture = nullptr;
 SDL_GPUTexture *cubemapTexture = nullptr;
 SDL_GPUTexture *irradianceTexture = nullptr;
 SDL_GPUTexture *prefilterTexture = nullptr;
 
+ModelData *quadModel;
 ModelData *cubeModel;
 
 RootUI *rootUI;
 SystemMonitorUI *systemMonitorUI;
 
+ResourceManager *resourceManager;
 PostProcess *postProcess;
 ShadowManager *shadowManager;
 
@@ -257,603 +182,6 @@ SDL_GPUTexture *CreateDefaultTexture(Uint8 r, Uint8 g, Uint8 b, Uint8 a)
     SDL_ReleaseGPUTransferBuffer(device, transferBuffer);
 
     return texture;
-}
-
-glm::mat4 GetNodeTransform(const tinygltf::Node &node)
-{
-    glm::mat4 transform(1.0f);
-
-    // If matrix is provided directly, use it
-    if (node.matrix.size() == 16)
-    {
-        transform = glm::make_mat4(node.matrix.data());
-    }
-    else
-    {
-        // Otherwise, compose from TRS (Translation, Rotation, Scale)
-        glm::vec3 translation(0.0f);
-        glm::quat rotation(1.0f, 0.0f, 0.0f, 0.0f);
-        glm::vec3 scale(1.0f);
-
-        if (node.translation.size() == 3)
-        {
-            translation = glm::vec3(node.translation[0],
-                                    node.translation[1],
-                                    node.translation[2]);
-        }
-
-        if (node.rotation.size() == 4)
-        {
-            rotation = glm::quat(node.rotation[3],  // w comes last in glTF
-                                 node.rotation[0],  // x
-                                 node.rotation[1],  // y
-                                 node.rotation[2]); // z
-        }
-
-        if (node.scale.size() == 3)
-        {
-            scale = glm::vec3(node.scale[0],
-                              node.scale[1],
-                              node.scale[2]);
-        }
-
-        // Compose: T * R * S
-        transform = glm::translate(glm::mat4(1.0f), translation) *
-                    glm::mat4_cast(rotation) *
-                    glm::scale(glm::mat4(1.0f), scale);
-    }
-
-    return transform;
-}
-
-void ProcessNode(std::vector<NodeData> &nodes, const tinygltf::Model &model, int nodeIndex, const glm::mat4 &parentTransform)
-{
-    if (nodeIndex < 0)
-        return;
-
-    const auto &node = model.nodes[nodeIndex];
-
-    // Get local transform and compute world transform
-    glm::mat4 localTransform = GetNodeTransform(node);
-    glm::mat4 worldTransform = parentTransform * localTransform;
-
-    // Store transform info
-    NodeData nodeData;
-    nodeData.name = node.name;
-    nodeData.localTransform = localTransform;
-    nodeData.worldTransform = worldTransform;
-    nodeData.meshIndex = node.mesh;
-
-    nodes.push_back(nodeData);
-
-    SDL_Log("Node '%s': mesh=%d", node.name.c_str(), node.mesh);
-
-    // Process children recursively
-    for (int childIndex : node.children)
-    {
-        ProcessNode(nodes, model, childIndex, worldTransform);
-    }
-}
-
-// Helper function to get the base directory from a file path
-static std::string GetBasePath(const std::string &path)
-{
-    size_t last_slash = path.find_last_of("/\\");
-    if (last_slash != std::string::npos)
-    {
-        return path.substr(0, last_slash);
-    }
-    return "."; // Use current directory if no path found
-}
-
-void CalculateTangents(std::vector<Vertex> &vertices, const std::vector<uint32_t> &indices)
-{
-    // Reset tangents
-    for (auto &v : vertices)
-    {
-        v.tangent = glm::vec4(0.0f);
-    }
-
-    // Calculate tangents per triangle
-    for (size_t i = 0; i < indices.size(); i += 3)
-    {
-        Vertex &v0 = vertices[indices[i]];
-        Vertex &v1 = vertices[indices[i + 1]];
-        Vertex &v2 = vertices[indices[i + 2]];
-
-        glm::vec3 edge1 = v1.position - v0.position;
-        glm::vec3 edge2 = v2.position - v0.position;
-        glm::vec2 deltaUV1 = v1.uv - v0.uv;
-        glm::vec2 deltaUV2 = v2.uv - v0.uv;
-
-        float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
-
-        glm::vec3 tangent;
-        tangent.x = f * (deltaUV2.y * edge1.x - deltaUV1.y * edge2.x);
-        tangent.y = f * (deltaUV2.y * edge1.y - deltaUV1.y * edge2.y);
-        tangent.z = f * (deltaUV2.y * edge1.z - deltaUV1.y * edge2.z);
-
-        // Accumulate tangents for each vertex
-        v0.tangent += glm::vec4(tangent, 0.0f);
-        v1.tangent += glm::vec4(tangent, 0.0f);
-        v2.tangent += glm::vec4(tangent, 0.0f);
-    }
-
-    // Orthogonalize and calculate handedness
-    for (auto &v : vertices)
-    {
-        glm::vec3 t = glm::vec3(v.tangent);
-        // Gram-Schmidt orthogonalize
-        t = glm::normalize(t - v.normal * glm::dot(v.normal, t));
-
-        // Calculate handedness
-        glm::vec3 c = glm::cross(v.normal, t);
-        float w = (glm::dot(c, glm::vec3(v.tangent)) < 0.0f) ? -1.0f : 1.0f;
-
-        v.tangent = glm::vec4(t, w);
-    }
-}
-
-// Helper function to determine if a texture should be loaded as sRGB or linear
-bool IsTextureLinear(const tinygltf::Model &model, int textureIndex)
-{
-    if (textureIndex < 0 || textureIndex >= model.textures.size())
-        return true; // Default to linear for safety
-
-    // Check all materials to see how this texture is used
-    for (const auto &mat : model.materials)
-    {
-        // Normal maps, metallic-roughness, occlusion, and other data maps should be linear
-        if (mat.normalTexture.index == textureIndex)
-            return true; // Normal map - LINEAR
-
-        if (mat.pbrMetallicRoughness.metallicRoughnessTexture.index == textureIndex)
-            return true; // Metallic-roughness - LINEAR
-
-        if (mat.occlusionTexture.index == textureIndex)
-            return true; // Occlusion - LINEAR
-
-        // Base color and emissive are typically sRGB
-        if (mat.pbrMetallicRoughness.baseColorTexture.index == textureIndex)
-            return false; // Albedo/Base color - sRGB
-
-        if (mat.emissiveTexture.index == textureIndex)
-            return false; // Emissive - sRGB
-    }
-
-    // Default to linear if usage is unknown
-    return true;
-}
-
-Uint32 CalcMipLevels(int w, int h)
-{
-    Uint32 levels = 1;
-    Uint32 size = (Uint32)SDL_max(w, h);
-    while (size > 1)
-    {
-        size >>= 1;
-        ++levels;
-    }
-    return levels;
-}
-
-ModelData *LoadGLTFModel(const char *filename)
-{
-    tinygltf::Model model;
-    tinygltf::TinyGLTF loader;
-    std::string err, warn;
-
-    bool ret = loader.LoadBinaryFromFile(&model, &err, &warn, filename);
-    if (!warn.empty())
-        SDL_Log("GLTF Warning: %s", warn.c_str());
-    if (!err.empty())
-        SDL_Log("GLTF Error: %s", err.c_str());
-    if (!ret)
-    {
-        SDL_Log("Failed to load GLTF: %s", filename);
-        return NULL;
-    }
-
-    SDL_Log("Loaded GLTF: %s (%zu meshes, %zu materials, %zu textures)",
-            filename, model.meshes.size(), model.materials.size(), model.textures.size());
-
-    ModelData *modelData = new ModelData();
-
-    // Store base offsets
-    modelData->baseTextureIndex = (int)loadedTextures.size();
-    modelData->baseMaterialIndex = (int)loadedMaterials.size();
-
-    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(device);
-    SDL_GPUCopyPass *copyPass = SDL_BeginGPUCopyPass(cmd);
-
-    // --- 1. Load Textures ---
-    std::vector<SDL_GPUTransferBuffer *> textureTransferBuffers;
-    std::string baseDir = GetBasePath(filename); // Get base dir for external files
-
-    for (size_t i = 0; i < model.textures.size(); ++i)
-    {
-        const auto &gltfTex = model.textures[i];
-        if (gltfTex.source < 0)
-            continue;
-
-        const auto &gltfImage = model.images[gltfTex.source];
-
-        stbi_uc *loaded_pixels = nullptr;
-        const stbi_uc *pixel_source = nullptr;
-        int width = 0, height = 0, components = 0;
-        bool stb_loaded = false;
-
-        if (gltfImage.bufferView >= 0)
-        {
-            // Image is compressed in a buffer (e.g., PNG/JPG in a GLB)
-            const auto &view = model.bufferViews[gltfImage.bufferView];
-            const auto &buffer = model.buffers[view.buffer];
-            const stbi_uc *dataPtr = buffer.data.data() + view.byteOffset;
-            int dataLen = (int)view.byteLength;
-
-            loaded_pixels = stbi_load_from_memory(dataPtr, dataLen, &width, &height, &components, 4); // Force 4 components
-            stb_loaded = true;
-        }
-        else if (!gltfImage.uri.empty())
-        {
-            // Image is an external file
-            std::string imagePath = baseDir + "/" + gltfImage.uri;
-            loaded_pixels = stbi_load(imagePath.c_str(), &width, &height, &components, 4); // Force 4 components
-            stb_loaded = true;
-        }
-        else if (!gltfImage.image.empty())
-        {
-            // Image is raw, uncompressed data (original code's path)
-            pixel_source = gltfImage.image.data();
-            width = gltfImage.width;
-            height = gltfImage.height;
-            components = gltfImage.component;
-        }
-
-        if (!loaded_pixels && !pixel_source)
-        {
-            SDL_Log("Texture %zu has no image data, skipping", i);
-            loadedTextures.push_back(nullptr); // Push a null placeholder
-            continue;
-        }
-
-        // Determine if this texture should be linear or sRGB
-        bool isLinear = IsTextureLinear(model, i);
-
-        SDL_GPUTextureCreateInfo texInfo{};
-        texInfo.type = SDL_GPU_TEXTURETYPE_2D;
-        // Use appropriate format based on texture usage
-        texInfo.format = isLinear ? SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB;
-        texInfo.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
-        texInfo.width = width;
-        texInfo.height = height;
-        texInfo.layer_count_or_depth = 1;
-        texInfo.num_levels = CalcMipLevels(width, height);
-
-        Uint32 bufferSize = width * height * 4;
-
-        SDL_GPUTransferBufferCreateInfo transferInfo{};
-        transferInfo.size = bufferSize;
-        transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-        SDL_GPUTransferBuffer *transferBuffer = SDL_CreateGPUTransferBuffer(device, &transferInfo);
-        textureTransferBuffers.push_back(transferBuffer); // Store for later release
-
-        // Map buffer and convert/copy image data
-        Uint8 *dst = (Uint8 *)SDL_MapGPUTransferBuffer(device, transferBuffer, false);
-
-        if (stb_loaded)
-        {
-            SDL_memcpy(dst, loaded_pixels, bufferSize);
-        }
-        else if (pixel_source)
-        {
-            // Handle raw uncompressed data
-            if (components == 4)
-            {
-                SDL_memcpy(dst, pixel_source, bufferSize);
-            }
-            else if (components == 3)
-            {
-                // Convert RGB to RGBA
-                for (int p = 0; p < width * height; ++p)
-                {
-                    dst[p * 4 + 0] = pixel_source[p * 3 + 0];
-                    dst[p * 4 + 1] = pixel_source[p * 3 + 1];
-                    dst[p * 4 + 2] = pixel_source[p * 3 + 2];
-                    dst[p * 4 + 3] = 255;
-                }
-            }
-            else if (components == 2)
-            {
-                // Convert RG to RGBA (useful for normal maps in RG format)
-                for (int p = 0; p < width * height; ++p)
-                {
-                    dst[p * 4 + 0] = pixel_source[p * 2 + 0];
-                    dst[p * 4 + 1] = pixel_source[p * 2 + 1];
-                    dst[p * 4 + 2] = 0;
-                    dst[p * 4 + 3] = 255;
-                }
-            }
-            else if (components == 1)
-            {
-                // Convert grayscale to RGBA
-                for (int p = 0; p < width * height; ++p)
-                {
-                    dst[p * 4 + 0] = pixel_source[p];
-                    dst[p * 4 + 1] = pixel_source[p];
-                    dst[p * 4 + 2] = pixel_source[p];
-                    dst[p * 4 + 3] = 255;
-                }
-            }
-        }
-
-        SDL_UnmapGPUTransferBuffer(device, transferBuffer);
-
-        if (stb_loaded)
-        {
-            stbi_image_free(loaded_pixels); // Don't forget to free STB's data
-        }
-
-        // Create the GPU texture
-        SDL_GPUTexture *texture = SDL_CreateGPUTexture(device, &texInfo);
-
-        // Add to copy pass
-        SDL_GPUTextureTransferInfo tti = {0};
-        SDL_GPUTextureRegion region = {0};
-        tti.transfer_buffer = transferBuffer;
-        region.texture = texture;
-        region.mip_level = 0;
-        region.w = width;
-        region.h = height;
-        region.d = 1;
-        SDL_UploadToGPUTexture(copyPass, &tti, &region, true);
-
-        // Create wrapper Texture object
-        Texture *tex = new Texture();
-        tex->texture = texture;
-        tex->width = width;
-        tex->height = height;
-        tex->nrComponents = 4; // We converted all to 4
-        // tex->sampler will be set from loadedSamplers[0] when rendering
-        // tex->isLinear = isLinear;
-
-        SDL_Log("Loaded texture %zu: %dx%d, format: %s", i, width, height, isLinear ? "LINEAR" : "sRGB");
-
-        loadedTextures.push_back(tex);
-    }
-
-    // --- 2. Load Materials ---
-    for (size_t i = 0; i < model.materials.size(); ++i)
-    {
-        const auto &gltfMat = model.materials[i];
-        Material *mat = new Material(gltfMat.name);
-
-        const auto &pbr = gltfMat.pbrMetallicRoughness;
-        if (pbr.baseColorFactor.size() == 4)
-            mat->albedo = glm::make_vec4(pbr.baseColorFactor.data());
-        if (pbr.baseColorTexture.index >= 0)
-            mat->albedoTexture = loadedTextures[pbr.baseColorTexture.index + modelData->baseTextureIndex];
-
-        mat->metallic = (float)pbr.metallicFactor;
-        mat->roughness = (float)pbr.roughnessFactor;
-        if (pbr.metallicRoughnessTexture.index >= 0)
-            mat->metallicRoughnessTexture = loadedTextures[pbr.metallicRoughnessTexture.index + modelData->baseTextureIndex];
-
-        if (gltfMat.normalTexture.index >= 0)
-            mat->normalTexture = loadedTextures[gltfMat.normalTexture.index + modelData->baseTextureIndex];
-
-        if (gltfMat.occlusionTexture.index >= 0)
-            mat->occlusionTexture = loadedTextures[gltfMat.occlusionTexture.index + modelData->baseTextureIndex];
-
-        if (gltfMat.emissiveFactor.size() == 3)
-            mat->emissiveColor = glm::vec4(glm::make_vec3(gltfMat.emissiveFactor.data()), 1.0f); // Store strength in alpha
-
-        if (gltfMat.emissiveTexture.index >= 0)
-            mat->emissiveTexture = loadedTextures[gltfMat.emissiveTexture.index + modelData->baseTextureIndex];
-
-        loadedMaterials.push_back(mat);
-    }
-
-    // --- 3. Process Nodes (Scene Hierarchy) ---
-    if (!model.scenes.empty())
-    {
-        const auto &scene = model.scenes[model.defaultScene >= 0 ? model.defaultScene : 0];
-
-        // Process root nodes
-        for (int nodeIndex : scene.nodes)
-        {
-            ProcessNode(modelData->nodes, model, nodeIndex, glm::mat4(1.0f));
-        }
-
-        SDL_Log("Processed %zu nodes", modelData->nodes.size());
-    }
-
-    // --- 4. Process Meshes and Primitives (Geometry) ---
-    for (size_t meshIdx = 0; meshIdx < model.meshes.size(); ++meshIdx)
-    {
-        const auto &mesh = model.meshes[meshIdx];
-        MeshData meshData;
-
-        // Process each primitive in the mesh
-        for (size_t primIdx = 0; primIdx < mesh.primitives.size(); ++primIdx)
-        {
-            const auto &prim = mesh.primitives[primIdx];
-            if (prim.attributes.find("POSITION") == prim.attributes.end())
-            {
-                SDL_Log("Primitive has no POSITION attribute, skipping.");
-                continue;
-            }
-
-            PrimitiveData primData;
-            primData.name = mesh.name.empty() ? ("mesh_" + std::to_string(meshIdx) + "_prim_" + std::to_string(primIdx)) : (mesh.name + "_prim_" + std::to_string(primIdx));
-
-            // Link material
-            primData.materialIndex = (prim.material >= 0) ? (prim.material + modelData->baseMaterialIndex) : -1;
-
-            // Load positions
-            const auto &posAccessor = model.accessors[prim.attributes.at("POSITION")];
-            const auto &posView = model.bufferViews[posAccessor.bufferView];
-            const auto &posBuffer = model.buffers[posView.buffer];
-            const float *positions = reinterpret_cast<const float *>(&posBuffer.data[posView.byteOffset + posAccessor.byteOffset]);
-            const int posStride = posView.byteStride ? posView.byteStride / sizeof(float) : 3;
-
-            // Load normals if available
-            bool hasNormal = prim.attributes.find("NORMAL") != prim.attributes.end();
-            const float *normals = nullptr;
-            int normStride = 0;
-            if (hasNormal)
-            {
-                const auto &normAccessor = model.accessors[prim.attributes.at("NORMAL")];
-                const auto &normView = model.bufferViews[normAccessor.bufferView];
-                const auto &normBuffer = model.buffers[normView.buffer];
-                normals = reinterpret_cast<const float *>(&normBuffer.data[normView.byteOffset + normAccessor.byteOffset]);
-                normStride = normView.byteStride ? normView.byteStride / sizeof(float) : 3;
-            }
-
-            // Load UVs if available
-            bool hasUV = prim.attributes.find("TEXCOORD_0") != prim.attributes.end();
-            const float *uvs = nullptr;
-            int uvStride = 0;
-            if (hasUV)
-            {
-                const auto &uvAccessor = model.accessors[prim.attributes.at("TEXCOORD_0")];
-                const auto &uvView = model.bufferViews[uvAccessor.bufferView];
-                const auto &uvBuffer = model.buffers[uvView.buffer];
-                uvs = reinterpret_cast<const float *>(&uvBuffer.data[uvView.byteOffset + uvAccessor.byteOffset]);
-                uvStride = uvView.byteStride ? uvView.byteStride / sizeof(float) : 2;
-            }
-
-            // Load tangents if available
-            bool hasTangent = prim.attributes.find("TANGENT") != prim.attributes.end();
-            const float *tangents = nullptr;
-            int tangentStride = 0;
-            if (hasTangent)
-            {
-                const auto &tangentAccessor = model.accessors[prim.attributes.at("TANGENT")];
-                const auto &tangentView = model.bufferViews[tangentAccessor.bufferView];
-                const auto &tangentBuffer = model.buffers[tangentView.buffer];
-                tangents = reinterpret_cast<const float *>(&tangentBuffer.data[tangentView.byteOffset + tangentAccessor.byteOffset]);
-                tangentStride = tangentView.byteStride ? tangentView.byteStride / sizeof(float) : 4; // Tangents are vec4
-            }
-
-            // Build vertex data
-            primData.vertices.resize(posAccessor.count);
-            for (size_t i = 0; i < posAccessor.count; ++i)
-            {
-                primData.vertices[i].position = glm::make_vec3(positions + i * posStride);
-                primData.vertices[i].normal = hasNormal ? glm::make_vec3(normals + i * normStride) : glm::vec3(0.0f, 1.0f, 0.0f);
-                primData.vertices[i].uv = hasUV ? glm::make_vec2(uvs + i * uvStride) : glm::vec2(0.0f, 0.0f);
-                primData.vertices[i].tangent = hasTangent ? glm::make_vec4(tangents + i * tangentStride) : glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
-            }
-
-            // Load indices
-            if (prim.indices >= 0)
-            {
-                const auto &indexAccessor = model.accessors[prim.indices];
-                const auto &indexView = model.bufferViews[indexAccessor.bufferView];
-                const auto &indexBuffer = model.buffers[indexView.buffer];
-                const uint8_t *indexData = &indexBuffer.data[indexView.byteOffset + indexAccessor.byteOffset];
-
-                primData.indices.resize(indexAccessor.count);
-
-                if (indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
-                {
-                    const uint16_t *indices16 = reinterpret_cast<const uint16_t *>(indexData);
-                    for (size_t i = 0; i < indexAccessor.count; ++i)
-                        primData.indices[i] = indices16[i];
-                }
-                else if (indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT)
-                {
-                    const uint32_t *indices32 = reinterpret_cast<const uint32_t *>(indexData);
-                    for (size_t i = 0; i < indexAccessor.count; ++i)
-                        primData.indices[i] = indices32[i];
-                }
-                else if (indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE)
-                {
-                    for (size_t i = 0; i < indexAccessor.count; ++i)
-                        primData.indices[i] = indexData[i];
-                }
-            }
-
-            // Calculate tangents if not present
-            if (!hasTangent && hasUV && !primData.indices.empty())
-            {
-                SDL_Log("Calculating tangents for mesh '%s'", primData.name.c_str());
-                CalculateTangents(primData.vertices, primData.indices);
-            }
-
-            SDL_Log("Loaded mesh '%s': %zu vertices, %zu indices, material: %d",
-                    primData.name.c_str(), primData.vertices.size(), primData.indices.size(), primData.materialIndex);
-
-            // --- Create GPU Buffers (Vertices) ---
-            SDL_GPUBufferCreateInfo vertexBufferInfo{};
-            vertexBufferInfo.size = primData.vertices.size() * sizeof(Vertex);
-            vertexBufferInfo.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
-            primData.vertexBuffer = SDL_CreateGPUBuffer(device, &vertexBufferInfo);
-
-            SDL_GPUTransferBufferCreateInfo vertexTransferInfo{};
-            vertexTransferInfo.size = vertexBufferInfo.size;
-            vertexTransferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-            primData.vertexTransferBuffer = SDL_CreateGPUTransferBuffer(device, &vertexTransferInfo);
-            Vertex *data = (Vertex *)SDL_MapGPUTransferBuffer(device, primData.vertexTransferBuffer, false);
-            SDL_memcpy(data, primData.vertices.data(), vertexBufferInfo.size);
-            SDL_UnmapGPUTransferBuffer(device, primData.vertexTransferBuffer);
-
-            SDL_GPUTransferBufferLocation vertexLocation = {primData.vertexTransferBuffer, 0};
-            SDL_GPUBufferRegion vertexRegion = {primData.vertexBuffer, 0, vertexBufferInfo.size};
-            SDL_UploadToGPUBuffer(copyPass, &vertexLocation, &vertexRegion, true); // Release transfer buffer
-
-            // --- Create GPU Buffers (Indices) ---
-            if (!primData.indices.empty())
-            {
-                SDL_GPUBufferCreateInfo indexBufferInfo{};
-                indexBufferInfo.size = primData.indices.size() * sizeof(uint32_t);
-                indexBufferInfo.usage = SDL_GPU_BUFFERUSAGE_INDEX;
-                primData.indexBuffer = SDL_CreateGPUBuffer(device, &indexBufferInfo);
-
-                SDL_GPUTransferBufferCreateInfo indexTransferInfo{};
-                indexTransferInfo.size = indexBufferInfo.size;
-                indexTransferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-                primData.indexTransferBuffer = SDL_CreateGPUTransferBuffer(device, &indexTransferInfo);
-                uint32_t *indexMap = (uint32_t *)SDL_MapGPUTransferBuffer(device, primData.indexTransferBuffer, false);
-                SDL_memcpy(indexMap, primData.indices.data(), indexBufferInfo.size);
-                SDL_UnmapGPUTransferBuffer(device, primData.indexTransferBuffer);
-
-                SDL_GPUTransferBufferLocation indexLocation = {primData.indexTransferBuffer, 0};
-                SDL_GPUBufferRegion indexRegion = {primData.indexBuffer, 0, indexBufferInfo.size};
-                SDL_UploadToGPUBuffer(copyPass, &indexLocation, &indexRegion, true); // Release transfer buffer
-            }
-
-            meshData.primitives.push_back(std::move(primData));
-        }
-
-        modelData->meshes.push_back(meshData);
-    }
-
-    // --- 5. Finalize Copy Pass ---
-    SDL_EndGPUCopyPass(copyPass);
-
-    // Generate mipmaps
-    for (size_t i = modelData->baseTextureIndex; i < loadedTextures.size(); ++i)
-    {
-        if (loadedTextures[i] && loadedTextures[i]->texture)
-            SDL_GenerateMipmapsForGPUTexture(cmd, loadedTextures[i]->texture);
-    }
-
-    SDL_GPUFence *initFence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
-    SDL_WaitForGPUFences(device, true, &initFence, 1);
-    SDL_ReleaseGPUFence(device, initFence);
-
-    // Release texture transfer buffers
-    for (auto *transferBuffer : textureTransferBuffers)
-    {
-        SDL_ReleaseGPUTransferBuffer(device, transferBuffer);
-    }
-
-    SDL_Log("Total: %zu meshes, %zu materials, %zu textures loaded for this model",
-            modelData->meshes.size(), model.materials.size(), model.textures.size());
-
-    return modelData;
 }
 
 void UpdateCamera(float dt)
@@ -934,78 +262,11 @@ SDL_GPUGraphicsPipeline *CreatePbrPipeline(
     return SDL_CreateGPUGraphicsPipeline(device, &pipelineInfo);
 }
 
-/**
- * @brief Helper to load an HDR texture.
- */
-SDL_GPUTexture *LoadHdrTexture(SDL_GPUDevice *device, const char *filepath)
-{
-    int width, height, nrComponents;
-    // 1. Use stbi_loadf to load data as floats
-    float *data = stbi_loadf(filepath, &width, &height, &nrComponents, 4);
-    if (!data)
-    {
-        SDL_LogError(0, "Failed to load HDR image: %s", filepath);
-        return nullptr;
-    }
-
-    SDL_GPUTextureCreateInfo texInfo = {};
-    texInfo.type = SDL_GPU_TEXTURETYPE_2D;
-    // 2. Use a floating-point texture format
-    // R32G32B32A32_SFLOAT matches the 'float' data from stbi_loadf
-    // You could also use R16G16B16A16_SFLOAT to save memory, but it requires data conversion
-    texInfo.format = SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT;
-    texInfo.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
-    texInfo.width = width;
-    texInfo.height = height;
-    texInfo.layer_count_or_depth = 1;
-    texInfo.num_levels = CalcMipLevels(width, height);
-
-    // 3. Calculate the correct buffer size: width * height * components * type_size
-    // We forced 4 components (RGBA) and the type is float (4 bytes)
-    Uint32 bufferSize = width * height * 4 * sizeof(float);
-
-    SDL_GPUTransferBufferCreateInfo transferInfo{};
-    transferInfo.size = bufferSize;
-    transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-    SDL_GPUTransferBuffer *transferBuffer = SDL_CreateGPUTransferBuffer(device, &transferInfo);
-
-    Uint8 *dst = (Uint8 *)SDL_MapGPUTransferBuffer(device, transferBuffer, false);
-
-    SDL_memcpy(dst, data, bufferSize);
-    SDL_UnmapGPUTransferBuffer(device, transferBuffer);
-
-    stbi_image_free(data);
-
-    SDL_GPUTexture *texture = SDL_CreateGPUTexture(device, &texInfo);
-
-    SDL_GPUCommandBuffer *commandBuffer = SDL_AcquireGPUCommandBuffer(device);
-    SDL_GPUCopyPass *copyPass = SDL_BeginGPUCopyPass(commandBuffer);
-
-    SDL_GPUTextureTransferInfo tti = {0};
-    SDL_GPUTextureRegion region = {0};
-    tti.transfer_buffer = transferBuffer;
-    region.texture = texture;
-    region.w = width;
-    region.h = height;
-    region.d = 1;
-    SDL_UploadToGPUTexture(copyPass, &tti, &region, true); // True = release transfer buffer after copy
-
-    SDL_EndGPUCopyPass(copyPass);
-
-    SDL_GenerateMipmapsForGPUTexture(commandBuffer, texture);
-
-    SDL_GPUFence *initFence = SDL_SubmitGPUCommandBufferAndAcquireFence(commandBuffer);
-    SDL_WaitForGPUFences(device, true, &initFence, 1);
-    SDL_ReleaseGPUFence(device, initFence);
-
-    return texture;
-}
-
 SDL_GPUGraphicsPipeline *CreateSkyboxPipeline(SDL_GPUDevice *device)
 {
     // Load shaders
-    SDL_GPUShader *skyboxVertShader = Utils::LoadShader("src/shaders/cube.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
-    SDL_GPUShader *skyboxFragShader = Utils::LoadShader("src/shaders/skybox.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    SDL_GPUShader *skyboxVertShader = Utils::loadShader("src/shaders/cube.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
+    SDL_GPUShader *skyboxFragShader = Utils::loadShader("src/shaders/skybox.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
     // Vertex input - reuse your existing Vertex structure
     SDL_GPUVertexAttribute vertexAttributes[4] = {};
@@ -1240,6 +501,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     Utils::device = device;
     Utils::window = window;
 
+    resourceManager = new ResourceManager(device);
     postProcess = new PostProcess();
     postProcess->update(screenSize);
 
@@ -1248,12 +510,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 
     std::string exePath = Utils::getExecutablePath();
 
-    // create default resources
-    defaultWhiteTexture = CreateDefaultTexture(255, 255, 255, 255);
-    defaultBlackTexture = CreateDefaultTexture(0, 0, 0, 255);
-    defaultNormalTexture = CreateDefaultTexture(128, 128, 255, 255); // (0.5, 0.5, 1.0) normal
-    defaultMaterial = new Material("default");
-    loadedMaterials.push_back(defaultMaterial); // Add to global list, at index 0
+    defaultTexture = CreateDefaultTexture(255, 255, 255, 255);
 
     SDL_GPUSamplerCreateInfo samplerInfo{};
     samplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
@@ -1299,8 +556,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     }
 
     // create shaders
-    SDL_GPUShader *vertexShader = Utils::LoadShader("src/shaders/pbr.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
-    SDL_GPUShader *fragmentShader = Utils::LoadShader("src/shaders/pbr.frag", 9, 3, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    SDL_GPUShader *vertexShader = Utils::loadShader("src/shaders/pbr.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
+    SDL_GPUShader *fragmentShader = Utils::loadShader("src/shaders/pbr.frag", 9, 3, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
     // create the graphics pipeline
     SDL_GPUGraphicsPipelineCreateInfo pipelineInfo{};
@@ -1349,7 +606,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     // load model
     const char *modelPath = "assets/models/DamagedHelmet.glb";
     // const char *modelPath = "assets/models/ABeautifulGame.glb";
-    ModelData *model = LoadGLTFModel(std::string(exePath + "/" + modelPath).c_str());
+    ModelData *model = resourceManager->loadModel(std::string(exePath + "/" + modelPath).c_str());
     loadedModels.push_back(model);
 
     SDL_GPUSamplerCreateInfo brdfSamplerInfo{};
@@ -1367,18 +624,18 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     fragmentUniforms.lightColor = glm::vec3(1.0f) * 6.0f;
     fragmentUniforms.exposure = 1.0f;
 
-    ModelData *quadModel = LoadGLTFModel(std::string(exePath + "/assets/models/quad.glb").c_str());
+    quadModel = resourceManager->loadModel(std::string(exePath + "/assets/models/quad.glb").c_str());
     // loadedModels.push_back(quadModel);
-    cubeModel = LoadGLTFModel(std::string(exePath + "/assets/models/cube.glb").c_str());
+    cubeModel = resourceManager->loadModel(std::string(exePath + "/assets/models/cube.glb").c_str());
     // loadedModels.push_back(cubeModel);
 
     // shaders
-    SDL_GPUShader *quadVert = Utils::LoadShader("src/shaders/quad.vert", 0, 0, SDL_GPU_SHADERSTAGE_VERTEX);
-    SDL_GPUShader *cubeVert = Utils::LoadShader("src/shaders/cube.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
-    SDL_GPUShader *hdrToCubeFrag = Utils::LoadShader("src/shaders/hdr_to_cube.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
-    SDL_GPUShader *irradianceFrag = Utils::LoadShader("src/shaders/irradiance.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
-    SDL_GPUShader *prefilterFrag = Utils::LoadShader("src/shaders/prefilter.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
-    SDL_GPUShader *brdfFrag = Utils::LoadShader("src/shaders/brdf.frag", 0, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    SDL_GPUShader *quadVert = Utils::loadShader("src/shaders/quad.vert", 0, 0, SDL_GPU_SHADERSTAGE_VERTEX);
+    SDL_GPUShader *cubeVert = Utils::loadShader("src/shaders/cube.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
+    SDL_GPUShader *hdrToCubeFrag = Utils::loadShader("src/shaders/hdr_to_cube.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    SDL_GPUShader *irradianceFrag = Utils::loadShader("src/shaders/irradiance.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    SDL_GPUShader *prefilterFrag = Utils::loadShader("src/shaders/prefilter.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    SDL_GPUShader *brdfFrag = Utils::loadShader("src/shaders/brdf.frag", 0, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
     SDL_GPUSamplerCreateInfo hdrSamplerInfo{};
     hdrSamplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
@@ -1429,7 +686,11 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
         // const char *hdriPath = "/assets/hdris/golden_gate_hills_8k.hdr";
         // const char *hdriPath = "/assets/hdris/studio_small_03_1k.hdr";
         // const char *hdriPath = "/assets/hdris/TCom_IcelandGolfCourse_2K_hdri_sphere.hdr";
-        hdrTexture = LoadHdrTexture(device, std::string(exePath + hdriPath).c_str());
+
+        TextureParams params;
+        params.dataType = TextureDataType::Float32;
+        params.sample = true;
+        hdrTexture = resourceManager->loadTextureFromFile(params, std::string(exePath + hdriPath));
     }
 
     // pipelines
@@ -1499,7 +760,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
         SDL_GPUViewport viewport = {0, 0, (float)cubemapSize, (float)cubemapSize, 0.0f, 1.0f};
 
         // Bind the input HDR texture
-        SDL_GPUTextureSamplerBinding hdrBinding = {hdrTexture, hdrSampler};
+        SDL_GPUTextureSamplerBinding hdrBinding = {hdrTexture.id, hdrSampler};
 
         // Bind the cube mesh
         const PrimitiveData &prim = cubeModel->meshes[0].primitives[0];
@@ -1792,7 +1053,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
                 SDL_PushGPUVertexUniformData(commandBuffer, 0, &vertexUniforms, sizeof(vertexUniforms)); // Update VS UBO
 
                 // Get material (fallback to default)
-                Material *material = (prim.materialIndex >= 0) ? loadedMaterials[prim.materialIndex] : defaultMaterial;
+                Material *material = prim.material ? prim.material : &defaultMaterial;
 
                 // Populate material uniform struct
                 MaterialUniforms materialUniforms{};
@@ -1802,11 +1063,11 @@ SDL_AppResult SDL_AppIterate(void *appstate)
                 materialUniforms.roughnessFactor = material->roughness;
                 materialUniforms.occlusionStrength = 1.0f; // TODO: from texture
                 materialUniforms.uvScale = material->uvScale;
-                materialUniforms.hasAlbedoTexture = (material->albedoTexture != nullptr);
-                materialUniforms.hasNormalTexture = (material->normalTexture != nullptr);
-                materialUniforms.hasMetallicRoughnessTexture = (material->metallicRoughnessTexture != nullptr);
-                materialUniforms.hasOcclusionTexture = (material->occlusionTexture != nullptr);
-                materialUniforms.hasEmissiveTexture = (material->emissiveTexture != nullptr);
+                materialUniforms.hasAlbedoTexture = (material->albedoTexture.id != nullptr);
+                materialUniforms.hasNormalTexture = (material->normalTexture.id != nullptr);
+                materialUniforms.hasMetallicRoughnessTexture = (material->metallicRoughnessTexture.id != nullptr);
+                materialUniforms.hasOcclusionTexture = (material->occlusionTexture.id != nullptr);
+                materialUniforms.hasEmissiveTexture = (material->emissiveTexture.id != nullptr);
 
                 // Push Material uniforms (Slot 1 for FS)
                 SDL_PushGPUFragmentUniformData(commandBuffer, 1, &materialUniforms, sizeof(materialUniforms)); // FS binding 1
@@ -1815,23 +1076,23 @@ SDL_AppResult SDL_AppIterate(void *appstate)
                 SDL_GPUTextureSamplerBinding texBindings[9];
 
                 // Binding 0: Albedo
-                texBindings[0].texture = material->albedoTexture ? material->albedoTexture->texture : defaultWhiteTexture;
+                texBindings[0].texture = material->albedoTexture.id ? material->albedoTexture.id : defaultTexture;
                 texBindings[0].sampler = Utils::baseSampler;
 
                 // Binding 1: Normal
-                texBindings[1].texture = material->normalTexture ? material->normalTexture->texture : defaultNormalTexture;
+                texBindings[1].texture = material->normalTexture.id ? material->normalTexture.id : defaultTexture;
                 texBindings[1].sampler = Utils::baseSampler;
 
                 // Binding 2: Metallic-Roughness
-                texBindings[2].texture = material->metallicRoughnessTexture ? material->metallicRoughnessTexture->texture : defaultWhiteTexture; // Use white (1,1,1) -> (metallic=1, rough=1)
+                texBindings[2].texture = material->metallicRoughnessTexture.id ? material->metallicRoughnessTexture.id : defaultTexture; // Use white (1,1,1) -> (metallic=1, rough=1)
                 texBindings[2].sampler = Utils::baseSampler;
 
                 // Binding 3: Occlusion
-                texBindings[3].texture = material->occlusionTexture ? material->occlusionTexture->texture : defaultWhiteTexture; // Use white (1.0) -> no occlusion
+                texBindings[3].texture = material->occlusionTexture.id ? material->occlusionTexture.id : defaultTexture; // Use white (1.0) -> no occlusion
                 texBindings[3].sampler = Utils::baseSampler;
 
                 // Binding 4: Emissive
-                texBindings[4].texture = material->emissiveTexture ? material->emissiveTexture->texture : defaultBlackTexture; // Use black -> no emission
+                texBindings[4].texture = material->emissiveTexture.id ? material->emissiveTexture.id : defaultTexture; // Use black -> no emission
                 texBindings[4].sampler = Utils::baseSampler;
 
                 // Binding 5: Irradiance
@@ -1950,42 +1211,14 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
     delete shadowManager;
 
     for (const auto &model : loadedModels)
-    {
-        for (const auto &mesh : model->meshes)
-        {
-            for (const auto &prim : mesh.primitives)
-            {
-                if (prim.vertexBuffer)
-                    SDL_ReleaseGPUBuffer(device, prim.vertexBuffer);
-                if (prim.indexBuffer)
-                    SDL_ReleaseGPUBuffer(device, prim.indexBuffer);
-            }
-        }
+        resourceManager->dispose(model);
 
-        delete model;
-    }
-
-    for (const auto &texture : loadedTextures)
-    {
-        if (texture && texture->texture)
-            SDL_ReleaseGPUTexture(device, texture->texture);
-        delete texture;
-    }
-
-    for (const auto &material : loadedMaterials)
-    {
-        delete material;
-    }
+    resourceManager->dispose(cubeModel);
+    resourceManager->dispose(quadModel);
+    resourceManager->dispose(hdrTexture);
 
     SDL_ReleaseGPUSampler(device, Utils::baseSampler);
     SDL_ReleaseGPUSampler(device, cubeSampler);
-
-    if (defaultWhiteTexture)
-        SDL_ReleaseGPUTexture(device, defaultWhiteTexture);
-    if (defaultBlackTexture)
-        SDL_ReleaseGPUTexture(device, defaultBlackTexture);
-    if (defaultNormalTexture)
-        SDL_ReleaseGPUTexture(device, defaultNormalTexture);
 
     if (graphicsPipeline)
         SDL_ReleaseGPUGraphicsPipeline(device, graphicsPipeline);

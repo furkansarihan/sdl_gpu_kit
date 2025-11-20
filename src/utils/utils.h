@@ -96,11 +96,40 @@ public:
         return path.substr(0, lastSeparator);
     }
 
+    // Helper function to get the base directory from a file path
+    static std::string getBasePath(const std::string &path)
+    {
+        size_t last_slash = path.find_last_of("/\\");
+        if (last_slash != std::string::npos)
+        {
+            return path.substr(0, last_slash);
+        }
+        return "."; // Use current directory if no path found
+    }
+
+    // Helper function to get file extension
+    static std::string getFileExtension(const std::string &path)
+    {
+        // Find the last dot in the path
+        size_t dot_pos = path.find_last_of('.');
+        if (dot_pos == std::string::npos)
+            return ""; // No extension
+
+        // Get the substring after the dot
+        std::string ext = path.substr(dot_pos + 1);
+
+        // Convert to lowercase for case-insensitive comparison
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+
+        return ext;
+    }
+
     static SDL_GPUDevice *device;
     static SDL_Window *window;
     static SDL_GPUSampler *baseSampler;
 
-    static SDL_GPUShader *LoadShader(
+    static SDL_GPUShader *loadShader(
         const char *filepath,
         Uint32 numSamplers,
         Uint32 numUniformBuffers,
