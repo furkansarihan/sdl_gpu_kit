@@ -35,6 +35,7 @@
 #include "shadow_manager/shadow_manager.h"
 
 #include "camera.h"
+#include "frustum.h"
 #include "resource_manager/resource_manager.h"
 
 struct VertexUniforms
@@ -396,6 +397,30 @@ void RenderSkybox(
     SDL_DrawGPUIndexedPrimitives(renderPass, cubePrimitive->indices.size(), 1, 0, 0, 0);
 }
 
+// Extract uniform-ish scale for bounding sphere
+float ExtractMaxScale(const glm::mat4 &m)
+{
+    float sx = glm::length(glm::vec3(m[0])); // column 0
+    float sy = glm::length(glm::vec3(m[1])); // column 1
+    float sz = glm::length(glm::vec3(m[2])); // column 2
+    return std::max(sx, std::max(sy, sz));
+}
+
+bool PrimitiveInFrustum(
+    const PrimitiveData &prim,
+    const glm::mat4 &worldTransform,
+    Frustum &frustum)
+{
+    // Transform local center to world space
+    glm::vec3 worldCenter = glm::vec3(worldTransform * glm::vec4(prim.sphereCenter, 1.0f));
+
+    // Approximate radius scale by max axis scale
+    float maxScale = ExtractMaxScale(worldTransform);
+    float worldRadius = prim.sphereRadius * maxScale;
+
+    return frustum.containsSphere(worldCenter, worldRadius);
+}
+
 void RenderToShadowMaps(SDL_GPUCommandBuffer *commandBuffer)
 {
     SDL_GPUColorTargetInfo colorTargetInfo{};
@@ -420,6 +445,14 @@ void RenderToShadowMaps(SDL_GPUCommandBuffer *commandBuffer)
         if (!shadowPass)
             continue;
 
+        const Cascade &cascade = shadowManager->m_cascades[cascadeIndex];
+        const glm::mat4 &lightView = cascade.view;
+        const glm::mat4 &lightProj = cascade.projection;
+        const glm::mat4 lightViewProj = lightProj * lightView;
+        Frustum cascadeFrustum = Frustum::fromMatrix(lightViewProj);
+
+        shadowManager->m_shadowVertexUniforms.lightViewProj = lightViewProj;
+
         SDL_BindGPUGraphicsPipeline(shadowPass, shadowManager->m_shadowPipeline);
         SDL_SetGPUViewport(shadowPass, &viewport);
 
@@ -431,12 +464,13 @@ void RenderToShadowMaps(SDL_GPUCommandBuffer *commandBuffer)
                     continue;
 
                 const MeshData &mesh = model->meshes[node.meshIndex];
+                const glm::mat4 &world = node.worldTransform;
 
                 for (const auto &prim : mesh.primitives)
                 {
-                    // shadowVertexUniforms.lightViewProj = shadowUniforms.lightViewProj[cascadeIndex];
-                    shadowManager->m_shadowVertexUniforms.lightViewProj =
-                        shadowManager->m_cascades[cascadeIndex].projection * shadowManager->m_cascades[cascadeIndex].view;
+                    if (!PrimitiveInFrustum(prim, world, cascadeFrustum))
+                        continue;
+
                     shadowManager->m_shadowVertexUniforms.model = node.worldTransform;
 
                     SDL_PushGPUVertexUniformData(
@@ -1036,6 +1070,9 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     SDL_PushGPUFragmentUniformData(commandBuffer, 0, &fragmentUniforms, sizeof(fragmentUniforms)); // FS binding 0
     SDL_PushGPUFragmentUniformData(commandBuffer, 2, &shadowManager->m_shadowUniforms, sizeof(shadowManager->m_shadowUniforms));
 
+    glm::mat4 vp = vertexUniforms.projection * vertexUniforms.view;
+    Frustum frustum = Frustum::fromMatrix(vp);
+
     // --- Render Models ---
     for (const auto &model : loadedModels)
         for (const auto &node : model->nodes)
@@ -1044,9 +1081,13 @@ SDL_AppResult SDL_AppIterate(void *appstate)
                 continue;
 
             const MeshData &mesh = model->meshes[node.meshIndex];
+            const glm::mat4 &world = node.worldTransform;
 
             for (const auto &prim : mesh.primitives)
             {
+                if (!PrimitiveInFrustum(prim, world, frustum))
+                    continue; // culled
+
                 // update per-node uniform data
                 vertexUniforms.model = node.worldTransform;
                 vertexUniforms.normalMatrix = glm::transpose(glm::inverse(vertexUniforms.model));

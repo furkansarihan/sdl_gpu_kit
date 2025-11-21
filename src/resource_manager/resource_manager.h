@@ -63,6 +63,11 @@ struct PrimitiveData
     SDL_GPUBuffer *indexBuffer = NULL;
     SDL_GPUTransferBuffer *vertexTransferBuffer = NULL;
     SDL_GPUTransferBuffer *indexTransferBuffer = NULL;
+
+    glm::vec3 aabbMin{std::numeric_limits<float>::max()};
+    glm::vec3 aabbMax{-std::numeric_limits<float>::max()};
+    glm::vec3 sphereCenter{0.0f};
+    float sphereRadius = 0.0f;
 };
 
 struct MeshData

@@ -448,6 +448,20 @@ ModelData *ResourceManager::loadModel(const std::string &path)
                 primData.vertices[i].normal = hasNormal ? glm::make_vec3(normals + i * normStride) : glm::vec3(0.0f, 1.0f, 0.0f);
                 primData.vertices[i].uv = hasUV ? glm::make_vec2(uvs + i * uvStride) : glm::vec2(0.0f, 0.0f);
                 primData.vertices[i].tangent = hasTangent ? glm::make_vec4(tangents + i * tangentStride) : glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+
+                const glm::vec3 &p = primData.vertices[i].position;
+                primData.aabbMin = glm::min(primData.aabbMin, p);
+                primData.aabbMax = glm::max(primData.aabbMax, p);
+            }
+
+            // Compute bounding sphere from AABB
+            primData.sphereCenter = (primData.aabbMin + primData.aabbMax) * 0.5f;
+            primData.sphereRadius = 0.0f;
+            for (const auto &v : primData.vertices)
+            {
+                primData.sphereRadius = std::max(
+                    primData.sphereRadius,
+                    glm::length(v.position - primData.sphereCenter));
             }
 
             // Load indices
