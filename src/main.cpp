@@ -36,6 +36,7 @@
 
 #include "camera.h"
 #include "frustum.h"
+#include "render_manager/render_manager.h"
 #include "resource_manager/resource_manager.h"
 
 struct VertexUniforms
@@ -54,20 +55,6 @@ struct FragmentUniforms
     float padding2;
     glm::vec3 lightColor;
     float exposure;
-};
-
-struct CubemapViewUBO
-{
-    glm::mat4 projection;
-    glm::mat4 view;
-    glm::mat4 model;
-};
-
-struct PrefilterUBO
-{
-    float roughness;
-    float cubemapSize;
-    float padding[2];
 };
 
 struct MaterialUniforms
@@ -92,19 +79,6 @@ SDL_Window *window;
 SDL_GPUDevice *device;
 
 SDL_GPUGraphicsPipeline *graphicsPipeline;
-SDL_GPUGraphicsPipeline *brdfPipeline;
-SDL_GPUGraphicsPipeline *cubemapPipeline;
-SDL_GPUGraphicsPipeline *irradiancePipeline;
-SDL_GPUGraphicsPipeline *prefilterPipeline;
-SDL_GPUGraphicsPipeline *skyboxPipeline;
-
-int prefilterMipLevels = 5;
-int prefilterSize = 128;
-int irradianceSize = 64;
-int cubemapSize = 1024;
-
-SDL_GPUSampler *hdrSampler;
-SDL_GPUSampler *brdfSampler;
 
 VertexUniforms vertexUniforms{};
 FragmentUniforms fragmentUniforms{};
@@ -116,26 +90,18 @@ Uint64 lastFrame = 0;
 
 // Global resource vectors
 std::vector<ModelData *> loadedModels;
-SDL_GPUSampler *cubeSampler;
-SDL_GPUSampler *skySampler;
 
 // Default resources
 SDL_GPUTexture *defaultTexture = nullptr;
 Material defaultMaterial("default");
 
 Texture hdrTexture;
-SDL_GPUTexture *brdfTexture = nullptr;
-SDL_GPUTexture *cubemapTexture = nullptr;
-SDL_GPUTexture *irradianceTexture = nullptr;
-SDL_GPUTexture *prefilterTexture = nullptr;
-
-ModelData *quadModel;
-ModelData *cubeModel;
 
 RootUI *rootUI;
 SystemMonitorUI *systemMonitorUI;
 
 ResourceManager *resourceManager;
+RenderManager *renderManager;
 PostProcess *postProcess;
 ShadowManager *shadowManager;
 
@@ -206,195 +172,6 @@ void UpdateCamera(float dt)
 
     if (glm::length2(direction) > 0.f)
         camera.position += glm::normalize(direction) * velocity;
-}
-
-SDL_GPUGraphicsPipeline *CreatePbrPipeline(
-    SDL_GPUDevice *device,
-    SDL_GPUShader *vertexShader,
-    SDL_GPUShader *fragmentShader,
-    SDL_GPUTextureFormat targetFormat,
-    SDL_GPUSampleCount sampleCount = SDL_GPU_SAMPLECOUNT_1)
-{
-    SDL_GPUVertexAttribute vertexAttributes[3]{};
-    vertexAttributes[0] = {0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 0};                 // pos
-    vertexAttributes[1] = {1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, sizeof(float) * 3}; // normal
-    vertexAttributes[2] = {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, sizeof(float) * 6}; // uv
-
-    // --- Rasterizer State ---
-    SDL_GPURasterizerState rasterizerState = {};
-    rasterizerState.cull_mode = SDL_GPU_CULLMODE_NONE;
-    rasterizerState.fill_mode = SDL_GPU_FILLMODE_FILL;
-    rasterizerState.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
-
-    // --- No Depth/Stencil ---
-    SDL_GPUDepthStencilState depthStencilState = {};
-    depthStencilState.enable_depth_test = false;
-    depthStencilState.enable_depth_write = false;
-
-    // --- Color Target ---
-    SDL_GPUColorTargetDescription colorTargetDesc = {};
-    colorTargetDesc.format = targetFormat;
-    colorTargetDesc.blend_state.enable_blend = false;
-
-    SDL_GPUGraphicsPipelineTargetInfo targetInfo = {};
-    targetInfo.color_target_descriptions = &colorTargetDesc;
-    targetInfo.num_color_targets = 1;
-    targetInfo.has_depth_stencil_target = false;
-
-    SDL_GPUVertexBufferDescription vertexBufferDesctiptions[1];
-    vertexBufferDesctiptions[0].slot = 0;
-    vertexBufferDesctiptions[0].pitch = sizeof(Vertex);
-    vertexBufferDesctiptions[0].input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
-
-    // --- Pipeline Create Info ---
-    SDL_GPUGraphicsPipelineCreateInfo pipelineInfo = {};
-    pipelineInfo.vertex_shader = vertexShader;
-    pipelineInfo.fragment_shader = fragmentShader;
-    pipelineInfo.vertex_input_state.vertex_buffer_descriptions = vertexBufferDesctiptions;
-    pipelineInfo.vertex_input_state.num_vertex_buffers = 1;
-    pipelineInfo.vertex_input_state.vertex_attributes = vertexAttributes;
-    pipelineInfo.vertex_input_state.num_vertex_attributes = 3;
-    pipelineInfo.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-    pipelineInfo.rasterizer_state = rasterizerState;
-    pipelineInfo.multisample_state.sample_count = sampleCount;
-    pipelineInfo.depth_stencil_state = depthStencilState;
-    pipelineInfo.target_info = targetInfo;
-
-    return SDL_CreateGPUGraphicsPipeline(device, &pipelineInfo);
-}
-
-SDL_GPUGraphicsPipeline *CreateSkyboxPipeline(SDL_GPUDevice *device)
-{
-    // Load shaders
-    SDL_GPUShader *skyboxVertShader = Utils::loadShader("src/shaders/cube.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
-    SDL_GPUShader *skyboxFragShader = Utils::loadShader("src/shaders/skybox.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
-
-    // Vertex input - reuse your existing Vertex structure
-    SDL_GPUVertexAttribute vertexAttributes[4] = {};
-
-    // Position (location = 0)
-    vertexAttributes[0].location = 0;
-    vertexAttributes[0].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
-    vertexAttributes[0].offset = offsetof(Vertex, position);
-    vertexAttributes[0].buffer_slot = 0;
-
-    // Normal (location = 1) - not used but must be defined
-    vertexAttributes[1].location = 1;
-    vertexAttributes[1].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
-    vertexAttributes[1].offset = offsetof(Vertex, normal);
-    vertexAttributes[1].buffer_slot = 0;
-
-    // UV (location = 2) - not used but must be defined
-    vertexAttributes[2].location = 2;
-    vertexAttributes[2].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
-    vertexAttributes[2].offset = offsetof(Vertex, uv);
-    vertexAttributes[2].buffer_slot = 0;
-
-    // Tangent (location = 3) - not used but must be defined
-    vertexAttributes[3].location = 3;
-    vertexAttributes[3].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
-    vertexAttributes[3].offset = offsetof(Vertex, tangent);
-    vertexAttributes[3].buffer_slot = 0;
-
-    SDL_GPUVertexBufferDescription vertexBufferDesc = {};
-    vertexBufferDesc.slot = 0;
-    vertexBufferDesc.pitch = sizeof(Vertex);
-    vertexBufferDesc.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
-
-    SDL_GPUVertexInputState vertexInputState = {};
-    vertexInputState.vertex_buffer_descriptions = &vertexBufferDesc;
-    vertexInputState.num_vertex_buffers = 1;
-    vertexInputState.vertex_attributes = vertexAttributes;
-    vertexInputState.num_vertex_attributes = 4;
-
-    // Rasterizer state - disable culling or use front face culling
-    SDL_GPURasterizerState rasterizerState = {};
-    rasterizerState.fill_mode = SDL_GPU_FILLMODE_FILL;
-    rasterizerState.cull_mode = SDL_GPU_CULLMODE_NONE;
-    rasterizerState.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
-
-    // Depth stencil state
-    SDL_GPUDepthStencilState depthStencilState = {};
-    depthStencilState.enable_depth_test = true;
-    depthStencilState.enable_depth_write = false; // Don't write to depth
-    depthStencilState.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
-
-    // Multisample state
-    SDL_GPUMultisampleState multisampleState = {};
-    multisampleState.sample_count = SDL_GPU_SAMPLECOUNT_1;
-
-    // Color target
-    SDL_GPUColorTargetDescription colorTarget = {};
-    colorTarget.format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
-
-    SDL_GPUGraphicsPipelineTargetInfo targetInfo = {};
-    targetInfo.color_target_descriptions = &colorTarget;
-    targetInfo.num_color_targets = 1;
-    targetInfo.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT; // Or your depth format
-    targetInfo.has_depth_stencil_target = true;
-
-    // Create pipeline
-    SDL_GPUGraphicsPipelineCreateInfo pipelineInfo = {};
-    pipelineInfo.vertex_shader = skyboxVertShader;
-    pipelineInfo.fragment_shader = skyboxFragShader;
-    pipelineInfo.vertex_input_state = vertexInputState;
-    pipelineInfo.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-    pipelineInfo.rasterizer_state = rasterizerState;
-    pipelineInfo.depth_stencil_state = depthStencilState;
-    pipelineInfo.multisample_state = multisampleState;
-    pipelineInfo.target_info = targetInfo;
-
-    SDL_GPUGraphicsPipeline *pipeline = SDL_CreateGPUGraphicsPipeline(device, &pipelineInfo);
-
-    // Release shaders
-    SDL_ReleaseGPUShader(device, skyboxVertShader);
-    SDL_ReleaseGPUShader(device, skyboxFragShader);
-
-    return pipeline;
-}
-
-void RenderSkybox(
-    SDL_GPUCommandBuffer *commandBuffer,
-    SDL_GPURenderPass *renderPass,
-    SDL_GPUGraphicsPipeline *skyboxPipeline,
-    PrimitiveData *cubePrimitive,
-    const glm::mat4 &viewMatrix,
-    const glm::mat4 &projectionMatrix,
-    SDL_GPUTexture *environmentCubemap,
-    SDL_GPUSampler *sampler)
-{
-    CubemapViewUBO vertUniforms;
-    vertUniforms.model = glm::scale(glm::mat4(1.0), {1.f, -1.f, 1.f});
-    vertUniforms.view = viewMatrix;
-    vertUniforms.projection = projectionMatrix;
-
-    // Push uniforms
-    SDL_PushGPUVertexUniformData(commandBuffer, 0, &vertUniforms, sizeof(vertUniforms));
-    SDL_PushGPUFragmentUniformData(commandBuffer, 0, &postProcess->m_skyUBO, sizeof(postProcess->m_skyUBO));
-
-    // Bind pipeline
-    SDL_BindGPUGraphicsPipeline(renderPass, skyboxPipeline);
-
-    // Bind vertex buffer (your cube's vertex buffer)
-    SDL_GPUBufferBinding vertexBinding;
-    vertexBinding.buffer = cubePrimitive->vertexBuffer;
-    vertexBinding.offset = 0;
-    SDL_BindGPUVertexBuffers(renderPass, 0, &vertexBinding, 1);
-
-    // Bind index buffer (your cube's index buffer)
-    SDL_GPUBufferBinding indexBinding;
-    indexBinding.buffer = cubePrimitive->indexBuffer;
-    indexBinding.offset = 0;
-    SDL_BindGPUIndexBuffer(renderPass, &indexBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
-
-    // Bind cubemap texture
-    SDL_GPUTextureSamplerBinding textureSamplerBinding;
-    textureSamplerBinding.texture = environmentCubemap;
-    textureSamplerBinding.sampler = sampler;
-    SDL_BindGPUFragmentSamplers(renderPass, 0, &textureSamplerBinding, 1);
-
-    // Draw the cube
-    SDL_DrawGPUIndexedPrimitives(renderPass, cubePrimitive->indices.size(), 1, 0, 0, 0);
 }
 
 // Extract uniform-ish scale for bounding sphere
@@ -536,6 +313,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     Utils::window = window;
 
     resourceManager = new ResourceManager(device);
+    renderManager = new RenderManager(resourceManager);
     postProcess = new PostProcess();
     postProcess->update(screenSize);
 
@@ -561,31 +339,6 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     if (!Utils::baseSampler)
     {
         SDL_Log("Failed to create baseSampler: %s", SDL_GetError());
-        return SDL_APP_FAILURE;
-    }
-
-    SDL_GPUSamplerCreateInfo cubeSamplerInfo{};
-    cubeSamplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
-    cubeSamplerInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
-    cubeSamplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
-    cubeSamplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-    cubeSamplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-    cubeSamplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-    cubeSamplerInfo.enable_anisotropy = true;
-    cubeSamplerInfo.max_anisotropy = 16.0f;
-    cubeSamplerInfo.min_lod = 0.0f;
-    cubeSamplerInfo.max_lod = (float)(prefilterMipLevels - 1);
-    cubeSampler = SDL_CreateGPUSampler(device, &cubeSamplerInfo);
-    if (!cubeSampler)
-    {
-        SDL_Log("Failed to create cube sampler: %s", SDL_GetError());
-        return SDL_APP_FAILURE;
-    }
-
-    skySampler = SDL_CreateGPUSampler(device, &cubeSamplerInfo);
-    if (!skySampler)
-    {
-        SDL_Log("Failed to create sky sampler: %s", SDL_GetError());
         return SDL_APP_FAILURE;
     }
 
@@ -643,79 +396,12 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     ModelData *model = resourceManager->loadModel(std::string(exePath + "/" + modelPath).c_str());
     loadedModels.push_back(model);
 
-    SDL_GPUSamplerCreateInfo brdfSamplerInfo{};
-    brdfSamplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
-    brdfSamplerInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
-    brdfSamplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;           // No mipmaps
-    brdfSamplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE; // IMPORTANT!
-    brdfSamplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE; // IMPORTANT!
-    brdfSamplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-    brdfSamplerInfo.max_anisotropy = 1.0f;
-    brdfSampler = SDL_CreateGPUSampler(device, &brdfSamplerInfo);
-
     // setup uniform values
     fragmentUniforms.lightDir = glm::normalize(glm::vec3(-0.3f, -0.8f, -0.3f));
     fragmentUniforms.lightColor = glm::vec3(1.0f) * 6.0f;
     fragmentUniforms.exposure = 1.0f;
 
-    quadModel = resourceManager->loadModel(std::string(exePath + "/assets/models/quad.glb").c_str());
-    // loadedModels.push_back(quadModel);
-    cubeModel = resourceManager->loadModel(std::string(exePath + "/assets/models/cube.glb").c_str());
-    // loadedModels.push_back(cubeModel);
-
-    // shaders
-    SDL_GPUShader *quadVert = Utils::loadShader("src/shaders/quad.vert", 0, 0, SDL_GPU_SHADERSTAGE_VERTEX);
-    SDL_GPUShader *cubeVert = Utils::loadShader("src/shaders/cube.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
-    SDL_GPUShader *hdrToCubeFrag = Utils::loadShader("src/shaders/hdr_to_cube.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
-    SDL_GPUShader *irradianceFrag = Utils::loadShader("src/shaders/irradiance.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
-    SDL_GPUShader *prefilterFrag = Utils::loadShader("src/shaders/prefilter.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
-    SDL_GPUShader *brdfFrag = Utils::loadShader("src/shaders/brdf.frag", 0, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
-
-    SDL_GPUSamplerCreateInfo hdrSamplerInfo{};
-    hdrSamplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
-    hdrSamplerInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
-    hdrSamplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
-    hdrSamplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-    hdrSamplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-    hdrSampler = SDL_CreateGPUSampler(device, &hdrSamplerInfo);
-
-    // textures
     {
-        // brdf
-        SDL_GPUTextureCreateInfo brdfInfo{};
-        brdfInfo.type = SDL_GPU_TEXTURETYPE_2D;
-        brdfInfo.format = SDL_GPU_TEXTUREFORMAT_R16G16_FLOAT;
-        brdfInfo.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
-        brdfInfo.width = 512;
-        brdfInfo.height = 512;
-        brdfInfo.layer_count_or_depth = 1;
-        brdfInfo.num_levels = 1;
-        brdfInfo.sample_count = SDL_GPU_SAMPLECOUNT_1;
-        brdfTexture = SDL_CreateGPUTexture(device, &brdfInfo);
-
-        // cubemap
-        SDL_GPUTextureCreateInfo cubemapInfo = {};
-        cubemapInfo.type = SDL_GPU_TEXTURETYPE_CUBE;
-        cubemapInfo.format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT; // Good HDR format
-        cubemapInfo.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
-        cubemapInfo.layer_count_or_depth = 6;
-        cubemapInfo.sample_count = SDL_GPU_SAMPLECOUNT_1;
-        cubemapInfo.width = cubemapSize;
-        cubemapInfo.height = cubemapSize;
-        cubemapInfo.num_levels = 5;
-        cubemapTexture = SDL_CreateGPUTexture(device, &cubemapInfo);
-
-        // irradiance
-        cubemapInfo.width = irradianceSize;
-        cubemapInfo.height = irradianceSize;
-        irradianceTexture = SDL_CreateGPUTexture(device, &cubemapInfo);
-
-        // prefilter
-        cubemapInfo.width = prefilterSize;
-        cubemapInfo.height = prefilterSize;
-        cubemapInfo.num_levels = prefilterMipLevels;
-        prefilterTexture = SDL_CreateGPUTexture(device, &cubemapInfo);
-
         const char *hdriPath = "/assets/hdris/kloofendal_43d_clear_2k.hdr";
         // const char *hdriPath = "/assets/hdris/golden_gate_hills_8k.hdr";
         // const char *hdriPath = "/assets/hdris/studio_small_03_1k.hdr";
@@ -725,241 +411,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
         params.dataType = TextureDataType::Float32;
         params.sample = true;
         hdrTexture = resourceManager->loadTextureFromFile(params, std::string(exePath + hdriPath));
+        renderManager->m_pbrManager->updateEnvironmentTexture(hdrTexture);
     }
-
-    // pipelines
-    {
-        brdfPipeline = CreatePbrPipeline(device, quadVert, brdfFrag, SDL_GPU_TEXTUREFORMAT_R16G16_FLOAT);
-        cubemapPipeline = CreatePbrPipeline(device, cubeVert, hdrToCubeFrag, SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT);
-        irradiancePipeline = CreatePbrPipeline(device, cubeVert, irradianceFrag, SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT);
-        prefilterPipeline = CreatePbrPipeline(device, cubeVert, prefilterFrag, SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT);
-    }
-
-    {
-        SDL_GPUCommandBuffer *commandBuffer = SDL_AcquireGPUCommandBuffer(device);
-
-        SDL_GPUColorTargetInfo colorTargetInfo{};
-        colorTargetInfo.clear_color = {0.f, 0.f, 0.f, 1.0f};
-        colorTargetInfo.load_op = SDL_GPU_LOADOP_CLEAR;
-        colorTargetInfo.store_op = SDL_GPU_STOREOP_STORE;
-        colorTargetInfo.texture = brdfTexture;
-
-        SDL_GPURenderPass *renderPass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, nullptr);
-        if (!renderPass)
-        {
-            SDL_Log("Failed to begin render pass: %s", SDL_GetError());
-            return SDL_APP_FAILURE;
-        }
-
-        SDL_BindGPUGraphicsPipeline(renderPass, brdfPipeline);
-
-        const PrimitiveData &prim = quadModel->meshes[0].primitives[0];
-
-        SDL_GPUBufferBinding vertexBinding{prim.vertexBuffer, 0};
-        SDL_GPUBufferBinding indexBinding = {prim.indexBuffer, 0};
-
-        SDL_BindGPUVertexBuffers(renderPass, 0, &vertexBinding, 1);
-        SDL_BindGPUIndexBuffer(renderPass, &indexBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
-
-        SDL_DrawGPUIndexedPrimitives(renderPass, (Uint32)prim.indices.size(), 1, 0, 0, 0);
-
-        SDL_EndGPURenderPass(renderPass);
-
-        SDL_GPUFence *initFence = SDL_SubmitGPUCommandBufferAndAcquireFence(commandBuffer);
-        SDL_WaitForGPUFences(device, true, &initFence, 1);
-        SDL_ReleaseGPUFence(device, initFence);
-    }
-
-    glm::mat4 m_captureViews[6] = {
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(-1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f)),
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
-    };
-    glm::mat4 m_captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
-
-    // cubemap
-    {
-        SDL_GPUCommandBuffer *cmdbuf = SDL_AcquireGPUCommandBuffer(device);
-
-        SDL_GPUColorTargetInfo colorTargetInfo = {};
-        colorTargetInfo.texture = cubemapTexture;
-        colorTargetInfo.mip_level = 0;
-        colorTargetInfo.load_op = SDL_GPU_LOADOP_CLEAR;
-        colorTargetInfo.store_op = SDL_GPU_STOREOP_STORE;
-        colorTargetInfo.clear_color = {0.0f, 0.0f, 0.0f, 1.0f};
-
-        SDL_GPUViewport viewport = {0, 0, (float)cubemapSize, (float)cubemapSize, 0.0f, 1.0f};
-
-        // Bind the input HDR texture
-        SDL_GPUTextureSamplerBinding hdrBinding = {hdrTexture.id, hdrSampler};
-
-        // Bind the cube mesh
-        const PrimitiveData &prim = cubeModel->meshes[0].primitives[0];
-
-        SDL_GPUBufferBinding vtxBinding = {prim.vertexBuffer, 0};
-        SDL_GPUBufferBinding idxBinding = {prim.indexBuffer, 0};
-
-        CubemapViewUBO uniforms = {};
-        uniforms.projection = m_captureProjection;
-        uniforms.model = glm::scale(glm::mat4(1.0), glm::vec3(1.f, -1.f, 1.f));
-
-        for (unsigned int i = 0; i < 6; ++i)
-        {
-            colorTargetInfo.layer_or_depth_plane = i;
-            uniforms.view = m_captureViews[i];
-
-            SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmdbuf, &colorTargetInfo, 1, nullptr);
-            {
-                SDL_BindGPUGraphicsPipeline(pass, cubemapPipeline);
-                SDL_SetGPUViewport(pass, &viewport);
-
-                SDL_PushGPUVertexUniformData(cmdbuf, 0, &uniforms, sizeof(uniforms));
-                SDL_BindGPUFragmentSamplers(pass, 0, &hdrBinding, 1);
-
-                SDL_BindGPUVertexBuffers(pass, 0, &vtxBinding, 1);
-                SDL_BindGPUIndexBuffer(pass, &idxBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
-
-                SDL_DrawGPUIndexedPrimitives(pass, prim.indices.size(), 1, 0, 0, 0);
-            }
-            SDL_EndGPURenderPass(pass);
-        }
-
-        SDL_GenerateMipmapsForGPUTexture(cmdbuf, cubemapTexture);
-
-        SDL_GPUFence *initFence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmdbuf);
-        SDL_WaitForGPUFences(device, true, &initFence, 1);
-        SDL_ReleaseGPUFence(device, initFence);
-    }
-
-    // irradiance
-    {
-        SDL_GPUCommandBuffer *cmdbuf = SDL_AcquireGPUCommandBuffer(device);
-
-        SDL_GPUColorTargetInfo colorTargetInfo = {};
-        colorTargetInfo.texture = irradianceTexture;
-        colorTargetInfo.mip_level = 0;
-        colorTargetInfo.load_op = SDL_GPU_LOADOP_CLEAR;
-        colorTargetInfo.store_op = SDL_GPU_STOREOP_STORE;
-        colorTargetInfo.clear_color = {0.0f, 0.0f, 0.0f, 1.0f};
-
-        SDL_GPUViewport viewport = {0, 0, (float)irradianceSize, (float)irradianceSize, 0.0f, 1.0f};
-
-        SDL_GPUTextureSamplerBinding hdrBinding = {cubemapTexture, hdrSampler};
-
-        // Bind the cube mesh
-        const PrimitiveData &prim = cubeModel->meshes[0].primitives[0];
-
-        SDL_GPUBufferBinding vtxBinding = {prim.vertexBuffer, 0};
-        SDL_GPUBufferBinding idxBinding = {prim.indexBuffer, 0};
-
-        CubemapViewUBO uniforms = {};
-        uniforms.projection = m_captureProjection;
-        uniforms.model = glm::mat4(1.0);
-
-        for (unsigned int i = 0; i < 6; ++i)
-        {
-            colorTargetInfo.layer_or_depth_plane = i;
-            uniforms.view = m_captureViews[i];
-
-            SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmdbuf, &colorTargetInfo, 1, nullptr);
-            {
-                SDL_BindGPUGraphicsPipeline(pass, irradiancePipeline);
-                SDL_SetGPUViewport(pass, &viewport);
-
-                SDL_PushGPUVertexUniformData(cmdbuf, 0, &uniforms, sizeof(uniforms));
-                SDL_BindGPUFragmentSamplers(pass, 0, &hdrBinding, 1);
-
-                SDL_BindGPUVertexBuffers(pass, 0, &vtxBinding, 1);
-                SDL_BindGPUIndexBuffer(pass, &idxBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
-
-                SDL_DrawGPUIndexedPrimitives(pass, prim.indices.size(), 1, 0, 0, 0);
-            }
-            SDL_EndGPURenderPass(pass);
-        }
-
-        SDL_GenerateMipmapsForGPUTexture(cmdbuf, irradianceTexture);
-
-        SDL_GPUFence *initFence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmdbuf);
-        SDL_WaitForGPUFences(device, true, &initFence, 1);
-        SDL_ReleaseGPUFence(device, initFence);
-    }
-
-    // prefilter
-    {
-        SDL_GPUCommandBuffer *cmdbuf = SDL_AcquireGPUCommandBuffer(device);
-
-        SDL_GPUColorTargetInfo colorTargetInfo = {};
-        colorTargetInfo.texture = prefilterTexture;
-        colorTargetInfo.mip_level = 0;
-        colorTargetInfo.load_op = SDL_GPU_LOADOP_CLEAR;
-        colorTargetInfo.store_op = SDL_GPU_STOREOP_STORE;
-        colorTargetInfo.clear_color = {0.0f, 0.0f, 0.0f, 1.0f};
-
-        SDL_GPUTextureSamplerBinding hdrBinding = {cubemapTexture, hdrSampler};
-
-        // Bind the cube mesh
-        const PrimitiveData &prim = cubeModel->meshes[0].primitives[0];
-
-        SDL_GPUBufferBinding vtxBinding = {prim.vertexBuffer, 0};
-        SDL_GPUBufferBinding idxBinding = {prim.indexBuffer, 0};
-
-        CubemapViewUBO uniforms = {};
-        uniforms.projection = m_captureProjection;
-        uniforms.model = glm::mat4(1.0);
-
-        PrefilterUBO fragmentUniform;
-        fragmentUniform.roughness = 0.5f;
-        fragmentUniform.cubemapSize = (float)cubemapSize;
-
-        // Render to each mip level
-        for (unsigned int mip = 0; mip < prefilterMipLevels; ++mip)
-        {
-            unsigned int mipWidth = static_cast<unsigned int>(prefilterSize * std::pow(0.5, mip));
-            unsigned int mipHeight = static_cast<unsigned int>(prefilterSize * std::pow(0.5, mip));
-
-            SDL_GPUViewport viewport = {0, 0, (float)mipWidth, (float)mipHeight, 0.0f, 1.0f};
-
-            fragmentUniform.roughness = (float)mip / (float)(prefilterMipLevels - 1);
-
-            colorTargetInfo.mip_level = mip;
-
-            for (unsigned int i = 0; i < 6; ++i)
-            {
-                colorTargetInfo.layer_or_depth_plane = i;
-                uniforms.view = m_captureViews[i];
-
-                SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmdbuf, &colorTargetInfo, 1, nullptr);
-                {
-                    SDL_BindGPUGraphicsPipeline(pass, prefilterPipeline);
-                    SDL_SetGPUViewport(pass, &viewport);
-
-                    // Push uniforms to both vertex and fragment stages
-                    SDL_PushGPUVertexUniformData(cmdbuf, 0, &uniforms, sizeof(uniforms));
-                    SDL_PushGPUFragmentUniformData(cmdbuf, 0, &fragmentUniform, sizeof(fragmentUniform));
-
-                    SDL_BindGPUFragmentSamplers(pass, 0, &hdrBinding, 1);
-
-                    SDL_BindGPUVertexBuffers(pass, 0, &vtxBinding, 1);
-                    SDL_BindGPUIndexBuffer(pass, &idxBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
-
-                    SDL_DrawGPUIndexedPrimitives(pass, prim.indices.size(), 1, 0, 0, 0);
-                }
-                SDL_EndGPURenderPass(pass);
-            }
-        }
-
-        SDL_GPUFence *initFence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmdbuf);
-        SDL_WaitForGPUFences(device, true, &initFence, 1);
-        SDL_ReleaseGPUFence(device, initFence);
-    }
-
-    SDL_ReleaseGPUShader(device, quadVert);
-    SDL_ReleaseGPUShader(device, brdfFrag);
-
-    skyboxPipeline = CreateSkyboxPipeline(device);
 
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
@@ -1052,15 +505,11 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     SDL_GPURenderPass *renderPass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, &depthInfo);
 
     glm::vec3 center{0.f, 0.f, 0.f};
-    RenderSkybox(
+    renderManager->m_pbrManager->renderSkybox(
         commandBuffer,
         renderPass,
-        skyboxPipeline,
-        &cubeModel->meshes[0].primitives[0],
         vertexUniforms.view,
-        vertexUniforms.projection,
-        cubemapTexture, // Or prefilterMap, or irradianceMap
-        skySampler);
+        vertexUniforms.projection);
 
     // bind the pipeline
     SDL_BindGPUGraphicsPipeline(renderPass, graphicsPipeline);
@@ -1137,16 +586,16 @@ SDL_AppResult SDL_AppIterate(void *appstate)
                 texBindings[4].sampler = Utils::baseSampler;
 
                 // Binding 5: Irradiance
-                texBindings[5].texture = irradianceTexture;
-                texBindings[5].sampler = cubeSampler;
+                texBindings[5].texture = renderManager->m_pbrManager->m_irradianceTexture;
+                texBindings[5].sampler = renderManager->m_pbrManager->m_cubeSampler;
 
                 // Binding 6: Prefilter
-                texBindings[6].texture = prefilterTexture;
-                texBindings[6].sampler = cubeSampler;
+                texBindings[6].texture = renderManager->m_pbrManager->m_prefilterTexture;
+                texBindings[6].sampler = renderManager->m_pbrManager->m_cubeSampler;
 
                 // Binding 7: Lut
-                texBindings[7].texture = brdfTexture;
-                texBindings[7].sampler = brdfSampler;
+                texBindings[7].texture = renderManager->m_pbrManager->m_brdfTexture;
+                texBindings[7].sampler = renderManager->m_pbrManager->m_brdfSampler;
 
                 // Binding 8: Cascaded shadow map (2D array)
                 texBindings[8].texture = shadowManager->m_shadowMapTexture;
@@ -1254,12 +703,9 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
     for (const auto &model : loadedModels)
         resourceManager->dispose(model);
 
-    resourceManager->dispose(cubeModel);
-    resourceManager->dispose(quadModel);
     resourceManager->dispose(hdrTexture);
 
     SDL_ReleaseGPUSampler(device, Utils::baseSampler);
-    SDL_ReleaseGPUSampler(device, cubeSampler);
 
     if (graphicsPipeline)
         SDL_ReleaseGPUGraphicsPipeline(device, graphicsPipeline);

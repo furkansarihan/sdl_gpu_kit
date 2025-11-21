@@ -6,12 +6,6 @@
 
 #include "../ui/base_ui.h"
 
-struct SkyboxFragmentUBO
-{
-    float lod;
-    float padding[3];
-};
-
 struct PostProcessFragmentUBO
 {
     glm::vec2 screenSize;
@@ -67,7 +61,6 @@ public:
     ~PostProcess();
 
     PostProcessFragmentUBO m_UBO;
-    SkyboxFragmentUBO m_skyUBO;
     BloomDownsampleUBO m_downsampleUBO;
     BloomUpsampleUBO m_upsampleUBO;
     GTAOParamsUBO m_gtaoParams;

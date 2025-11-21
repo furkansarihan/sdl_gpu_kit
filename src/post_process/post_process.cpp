@@ -97,7 +97,6 @@ PostProcess::PostProcess()
     m_UBO.exposure = 1.1f;
     m_UBO.gamma = 2.2f;
     m_UBO.bloomIntensity = 0.2f;
-    m_skyUBO.lod = 0.f;
     m_upsampleUBO.filterRadius = 1.;
     m_downsampleUBO.highlight = 100.0f;
 
@@ -135,13 +134,6 @@ void PostProcess::renderUI()
 {
     if (!ImGui::CollapsingHeader("Post Process", ImGuiTreeNodeFlags_DefaultOpen))
         return;
-
-    if (ImGui::TreeNode("Skybox"))
-    {
-        ImGui::DragFloat("LOD", &m_skyUBO.lod, 0.1f, 0.f, 10.f);
-
-        ImGui::TreePop();
-    }
 
     if (ImGui::TreeNode("Tone Mapping"))
     {
