@@ -132,14 +132,15 @@ void ShadowManager::renderUI()
     ImGui::DragFloat("Shadow Far", &m_shadowUniforms.shadowFar, 0.2f, 0.f, 1000.f);
     // ImGui::DragFloat4("Bias", &shadowUniforms.cascadeBias.x, 0.00001f, 0.f, 1.f, "%.5f");
 
-    if (ImGui::TreeNodeEx("Camera", ImGuiTreeNodeFlags_DefaultOpen))
+    // TODO: 
+    /* if (ImGui::TreeNodeEx("Camera", ImGuiTreeNodeFlags_DefaultOpen))
     {
         ImGui::DragFloat("Near", &m_camera->near, 0.1f, 0.f, 180.f);
         ImGui::DragFloat("Far", &m_camera->far, 1.f, 0.f, 10000.f);
         ImGui::DragFloat("Field Of View", &m_camera->fov, 0.1f, 0.f, 180.f);
 
         ImGui::TreePop();
-    }
+    } */
 
     if (ImGui::TreeNode("Textures"))
     {
@@ -154,11 +155,12 @@ void ShadowManager::renderUI()
 }
 
 void ShadowManager::updateCascades(
+    Camera *camera,
     const glm::mat4 &view,
     const glm::vec3 &lightDir,
     float aspect)
 {
-    float nearClip = m_camera->near;
+    float nearClip = camera->near;
     float farClip = m_shadowUniforms.shadowFar;
     float clipRange = farClip - nearClip;
 
@@ -183,7 +185,7 @@ void ShadowManager::updateCascades(
     glm::mat4 camView = view;
     glm::mat4 invView = glm::inverse(camView);
 
-    float fovY = glm::radians(m_camera->fov);
+    float fovY = glm::radians(camera->fov);
     float tanHalfFovY = std::tan(fovY * 0.5f);
     float tanHalfFovX = tanHalfFovY * aspect;
 

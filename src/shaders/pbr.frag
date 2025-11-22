@@ -13,9 +13,11 @@ layout(location = 0) out vec4 outColor;
 // Scene-wide uniforms
 layout(binding = 0) uniform FragmentUniformBlock {
     vec3 lightDir;
+    float padding1;
     vec3 viewPos;
+    float padding2;
     vec3 lightColor;
-    float exposure;
+    float padding3;
 } ubo;
 
 // Per-Material uniforms

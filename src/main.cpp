@@ -5,9 +5,8 @@
 
 #define SDL_MAIN_USE_CALLBACKS
 #include <SDL3/SDL.h>
-#include <SDL3/SDL_gpu.h>
-
 #include <SDL3/SDL_events.h>
+#include <SDL3/SDL_gpu.h>
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL_mouse.h>
 #include <SDL3/SDL_render.h>
@@ -19,137 +18,42 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/norm.hpp>
 
-#include <tiny_gltf.h>
-
-#include "stb_image.h"
-
 #include "external/imgui/imgui_impl_sdl3.h"
 #include "external/imgui/imgui_impl_sdlgpu3.h"
+#include <imgui.h>
+
 #include "ui/root_ui.h"
 #include "ui/system_monitor/system_monitor_ui.h"
-#include <imgui.h>
 
 #include "utils/utils.h"
 
 #include "post_process/post_process.h"
+#include "render_manager/render_manager.h"
+#include "resource_manager/renderable_model.h"
+#include "resource_manager/resource_manager.h"
 #include "shadow_manager/shadow_manager.h"
 
 #include "camera.h"
-#include "frustum.h"
-#include "render_manager/render_manager.h"
-#include "resource_manager/resource_manager.h"
-
-struct VertexUniforms
-{
-    glm::mat4 model;
-    glm::mat4 view;
-    glm::mat4 projection;
-    glm::mat4 normalMatrix;
-};
-
-struct FragmentUniforms
-{
-    glm::vec3 lightDir;
-    float padding1;
-    glm::vec3 viewPos;
-    float padding2;
-    glm::vec3 lightColor;
-    float exposure;
-};
-
-struct MaterialUniforms
-{
-    glm::vec4 albedoFactor;   // w component is unused
-    glm::vec4 emissiveFactor; // w component is emissiveStrength
-    float metallicFactor;
-    float roughnessFactor;
-    float occlusionStrength;
-    int hasAlbedoTexture;
-    int hasNormalTexture;
-    int hasMetallicRoughnessTexture;
-    int hasOcclusionTexture;
-    int hasEmissiveTexture;
-    glm::vec2 uvScale;
-    float padding[2];
-};
 
 Camera camera;
-
 SDL_Window *window;
 SDL_GPUDevice *device;
-
-SDL_GPUGraphicsPipeline *graphicsPipeline;
-
-VertexUniforms vertexUniforms{};
-FragmentUniforms fragmentUniforms{};
 
 bool keys[SDL_SCANCODE_COUNT]{};
 bool mouseButtons[6]{};
 float deltaTime = 0.0f;
 Uint64 lastFrame = 0;
 
-// Global resource vectors
-std::vector<ModelData *> loadedModels;
-
-// Default resources
-SDL_GPUTexture *defaultTexture = nullptr;
-Material defaultMaterial("default");
-
-Texture hdrTexture;
-
+// Sub-systems
 RootUI *rootUI;
 SystemMonitorUI *systemMonitorUI;
 
 ResourceManager *resourceManager;
 RenderManager *renderManager;
 PostProcess *postProcess;
-ShadowManager *shadowManager;
 
-// Helper to create a default 1x1 texture
-SDL_GPUTexture *CreateDefaultTexture(Uint8 r, Uint8 g, Uint8 b, Uint8 a)
-{
-    SDL_GPUTextureCreateInfo texInfo{};
-    texInfo.type = SDL_GPU_TEXTURETYPE_2D;
-    texInfo.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-    texInfo.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
-    texInfo.width = 1;
-    texInfo.height = 1;
-    texInfo.layer_count_or_depth = 1;
-    texInfo.num_levels = 1;
-    SDL_GPUTexture *texture = SDL_CreateGPUTexture(device, &texInfo);
-
-    SDL_GPUTransferBufferCreateInfo transferInfo{};
-    transferInfo.size = 4;
-    transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-    SDL_GPUTransferBuffer *transferBuffer = SDL_CreateGPUTransferBuffer(device, &transferInfo);
-
-    Uint8 *data = (Uint8 *)SDL_MapGPUTransferBuffer(device, transferBuffer, false);
-    data[0] = r;
-    data[1] = g;
-    data[2] = b;
-    data[3] = a;
-    SDL_UnmapGPUTransferBuffer(device, transferBuffer);
-
-    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(device);
-    SDL_GPUCopyPass *copyPass = SDL_BeginGPUCopyPass(cmd);
-
-    SDL_GPUTextureTransferInfo tti = {0};
-    SDL_GPUTextureRegion region = {0};
-    tti.transfer_buffer = transferBuffer;
-    region.texture = texture;
-    region.w = 1;
-    region.h = 1;
-    region.d = 1;
-    SDL_UploadToGPUTexture(copyPass, &tti, &region, 0);
-
-    SDL_EndGPUCopyPass(copyPass);
-    SDL_SubmitGPUCommandBuffer(cmd);
-
-    // We can destroy the transfer buffer now
-    SDL_ReleaseGPUTransferBuffer(device, transferBuffer);
-
-    return texture;
-}
+Texture hdrTexture;
+std::vector<RenderableModel *> renderableModels;
 
 void UpdateCamera(float dt)
 {
@@ -172,109 +76,6 @@ void UpdateCamera(float dt)
 
     if (glm::length2(direction) > 0.f)
         camera.position += glm::normalize(direction) * velocity;
-}
-
-// Extract uniform-ish scale for bounding sphere
-float ExtractMaxScale(const glm::mat4 &m)
-{
-    float sx = glm::length(glm::vec3(m[0])); // column 0
-    float sy = glm::length(glm::vec3(m[1])); // column 1
-    float sz = glm::length(glm::vec3(m[2])); // column 2
-    return std::max(sx, std::max(sy, sz));
-}
-
-bool PrimitiveInFrustum(
-    const PrimitiveData &prim,
-    const glm::mat4 &worldTransform,
-    Frustum &frustum)
-{
-    // Transform local center to world space
-    glm::vec3 worldCenter = glm::vec3(worldTransform * glm::vec4(prim.sphereCenter, 1.0f));
-
-    // Approximate radius scale by max axis scale
-    float maxScale = ExtractMaxScale(worldTransform);
-    float worldRadius = prim.sphereRadius * maxScale;
-
-    return frustum.containsSphere(worldCenter, worldRadius);
-}
-
-void RenderToShadowMaps(SDL_GPUCommandBuffer *commandBuffer)
-{
-    SDL_GPUColorTargetInfo colorTargetInfo{};
-    colorTargetInfo.texture = shadowManager->m_shadowMapTexture;
-    colorTargetInfo.clear_color = {1.f, 0.f, 0.f, 0.0f};
-    colorTargetInfo.load_op = SDL_GPU_LOADOP_CLEAR;
-    colorTargetInfo.store_op = SDL_GPU_STOREOP_STORE;
-
-    SDL_GPUViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.w = static_cast<float>(shadowManager->m_shadowMapResolution);
-    viewport.h = static_cast<float>(shadowManager->m_shadowMapResolution);
-    viewport.min_depth = 0.0f;
-    viewport.max_depth = 1.0f;
-
-    for (int cascadeIndex = 0; cascadeIndex < NUM_CASCADES; ++cascadeIndex)
-    {
-        colorTargetInfo.layer_or_depth_plane = cascadeIndex;
-
-        SDL_GPURenderPass *shadowPass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, nullptr);
-        if (!shadowPass)
-            continue;
-
-        const Cascade &cascade = shadowManager->m_cascades[cascadeIndex];
-        const glm::mat4 &lightView = cascade.view;
-        const glm::mat4 &lightProj = cascade.projection;
-        const glm::mat4 lightViewProj = lightProj * lightView;
-        Frustum cascadeFrustum = Frustum::fromMatrix(lightViewProj);
-
-        shadowManager->m_shadowVertexUniforms.lightViewProj = lightViewProj;
-
-        SDL_BindGPUGraphicsPipeline(shadowPass, shadowManager->m_shadowPipeline);
-        SDL_SetGPUViewport(shadowPass, &viewport);
-
-        for (const auto &model : loadedModels)
-        {
-            for (const auto &node : model->nodes)
-            {
-                if (node.meshIndex < 0 || node.meshIndex >= static_cast<int>(model->meshes.size()))
-                    continue;
-
-                const MeshData &mesh = model->meshes[node.meshIndex];
-                const glm::mat4 &world = node.worldTransform;
-
-                for (const auto &prim : mesh.primitives)
-                {
-                    if (!PrimitiveInFrustum(prim, world, cascadeFrustum))
-                        continue;
-
-                    shadowManager->m_shadowVertexUniforms.model = node.worldTransform;
-
-                    SDL_PushGPUVertexUniformData(
-                        commandBuffer,
-                        0,
-                        &shadowManager->m_shadowVertexUniforms,
-                        sizeof(shadowManager->m_shadowVertexUniforms));
-
-                    SDL_GPUBufferBinding vtxBinding{prim.vertexBuffer, 0};
-                    SDL_BindGPUVertexBuffers(shadowPass, 0, &vtxBinding, 1);
-
-                    if (!prim.indices.empty())
-                    {
-                        SDL_GPUBufferBinding idxBinding{prim.indexBuffer, 0};
-                        SDL_BindGPUIndexBuffer(shadowPass, &idxBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
-                        SDL_DrawGPUIndexedPrimitives(shadowPass, static_cast<Uint32>(prim.indices.size()), 1, 0, 0, 0);
-                    }
-                    else
-                    {
-                        SDL_DrawGPUPrimitives(shadowPass, static_cast<Uint32>(prim.vertices.size()), 0, 0, 0);
-                    }
-                }
-            }
-        }
-
-        SDL_EndGPURenderPass(shadowPass);
-    }
 }
 
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
@@ -309,100 +110,33 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 
     SDL_ClaimWindowForGPUDevice(device, window);
 
+    // Initialize Global Utils
     Utils::device = device;
     Utils::window = window;
 
+    // Initialize Managers
     resourceManager = new ResourceManager(device);
-    renderManager = new RenderManager(resourceManager);
+    renderManager = new RenderManager(device, window, resourceManager);
     postProcess = new PostProcess();
     postProcess->update(screenSize);
 
-    shadowManager = new ShadowManager();
-    shadowManager->m_camera = &camera;
-
+    // Load Assets
     std::string exePath = Utils::getExecutablePath();
-
-    defaultTexture = CreateDefaultTexture(255, 255, 255, 255);
-
-    SDL_GPUSamplerCreateInfo samplerInfo{};
-    samplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
-    samplerInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
-    samplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
-    samplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
-    samplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
-    samplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
-    samplerInfo.enable_anisotropy = true;
-    samplerInfo.max_anisotropy = 16.0f;
-    samplerInfo.min_lod = 0.0f;
-    samplerInfo.max_lod = 1000.0f;
-    Utils::baseSampler = SDL_CreateGPUSampler(device, &samplerInfo);
-    if (!Utils::baseSampler)
-    {
-        SDL_Log("Failed to create baseSampler: %s", SDL_GetError());
-        return SDL_APP_FAILURE;
-    }
-
-    // create shaders
-    SDL_GPUShader *vertexShader = Utils::loadShader("src/shaders/pbr.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
-    SDL_GPUShader *fragmentShader = Utils::loadShader("src/shaders/pbr.frag", 9, 3, SDL_GPU_SHADERSTAGE_FRAGMENT);
-
-    // create the graphics pipeline
-    SDL_GPUGraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.vertex_shader = vertexShader;
-    pipelineInfo.fragment_shader = fragmentShader;
-    pipelineInfo.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-
-    // describe the vertex buffers
-    SDL_GPUVertexBufferDescription vertexBufferDesctiptions[1];
-    vertexBufferDesctiptions[0].slot = 0;
-    vertexBufferDesctiptions[0].pitch = sizeof(Vertex);
-    vertexBufferDesctiptions[0].input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
-
-    pipelineInfo.vertex_input_state.num_vertex_buffers = 1;
-    pipelineInfo.vertex_input_state.vertex_buffer_descriptions = vertexBufferDesctiptions;
-
-    SDL_GPUVertexAttribute vertexAttributes[4]{};
-    vertexAttributes[0] = {0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 0};                 // pos
-    vertexAttributes[1] = {1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, sizeof(float) * 3}; // normal
-    vertexAttributes[2] = {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, sizeof(float) * 6}; // uv
-    vertexAttributes[3] = {3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, sizeof(float) * 8}; // uv
-    pipelineInfo.vertex_input_state.num_vertex_attributes = 4;
-    pipelineInfo.vertex_input_state.vertex_attributes = vertexAttributes;
-
-    // describe the color target
-    SDL_GPUColorTargetDescription colorTargetDescriptions[1];
-    colorTargetDescriptions[0] = {};
-    colorTargetDescriptions[0].format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
-
-    pipelineInfo.target_info.num_color_targets = 1;
-    pipelineInfo.target_info.color_target_descriptions = colorTargetDescriptions;
-    pipelineInfo.target_info.has_depth_stencil_target = true;
-    pipelineInfo.target_info.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
-
-    pipelineInfo.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS;
-    pipelineInfo.depth_stencil_state.enable_depth_test = true;
-    pipelineInfo.depth_stencil_state.enable_depth_write = true;
-
-    // create the pipeline
-    graphicsPipeline = SDL_CreateGPUGraphicsPipeline(device, &pipelineInfo);
-
-    // we don't need to store the shaders after creating the pipeline
-    SDL_ReleaseGPUShader(device, vertexShader);
-    SDL_ReleaseGPUShader(device, fragmentShader);
-
-    // load model
     const char *modelPath = "assets/models/DamagedHelmet.glb";
     // const char *modelPath = "assets/models/ABeautifulGame.glb";
     ModelData *model = resourceManager->loadModel(std::string(exePath + "/" + modelPath).c_str());
-    loadedModels.push_back(model);
 
-    // setup uniform values
-    fragmentUniforms.lightDir = glm::normalize(glm::vec3(-0.3f, -0.8f, -0.3f));
-    fragmentUniforms.lightColor = glm::vec3(1.0f) * 6.0f;
-    fragmentUniforms.exposure = 1.0f;
-
+    // Create Renderable Instance
+    if (model)
     {
-        const char *hdriPath = "/assets/hdris/kloofendal_43d_clear_2k.hdr";
+        RenderableModel *renderable = new RenderableModel(model, renderManager);
+        renderManager->addRenderable(renderable);
+        renderableModels.push_back(renderable);
+    }
+
+    // Load HDRI
+    {
+        const char *hdriPath = "assets/hdris/kloofendal_43d_clear_2k.hdr";
         // const char *hdriPath = "/assets/hdris/golden_gate_hills_8k.hdr";
         // const char *hdriPath = "/assets/hdris/studio_small_03_1k.hdr";
         // const char *hdriPath = "/assets/hdris/TCom_IcelandGolfCourse_2K_hdri_sphere.hdr";
@@ -410,11 +144,11 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
         TextureParams params;
         params.dataType = TextureDataType::Float32;
         params.sample = true;
-        hdrTexture = resourceManager->loadTextureFromFile(params, std::string(exePath + hdriPath));
-        renderManager->m_pbrManager->updateEnvironmentTexture(hdrTexture);
+        hdrTexture = resourceManager->loadTextureFromFile(params, std::string(exePath + "/" + hdriPath));
+        renderManager->getPbrManager()->updateEnvironmentTexture(hdrTexture);
     }
 
-    // Setup Dear ImGui context
+    // Setup ImGui
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
@@ -445,7 +179,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     systemMonitorUI = new SystemMonitorUI();
     rootUI->add(systemMonitorUI);
     rootUI->add(postProcess);
-    rootUI->add(shadowManager);
+    rootUI->add(renderManager);
+    rootUI->add(renderManager->getShadowManager());
 
     return SDL_APP_CONTINUE;
 }
@@ -460,39 +195,69 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
     SDL_GPUCommandBuffer *commandBuffer = SDL_AcquireGPUCommandBuffer(device);
 
-    // get the swapchain texture
     SDL_GPUTexture *swapchainTexture;
     Uint32 width, height;
     SDL_WaitAndAcquireGPUSwapchainTexture(commandBuffer, window, &swapchainTexture, &width, &height);
 
-    // end the frame early if a swapchain texture is not available
     if (swapchainTexture == NULL)
     {
-        // you must always submit the command buffer
         SDL_SubmitGPUCommandBuffer(commandBuffer);
         return SDL_APP_CONTINUE;
     }
 
     postProcess->update({width, height});
 
-    // update common uniform data
-    vertexUniforms.view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
-    vertexUniforms.projection = glm::perspective(glm::radians(camera.fov), (float)width / (float)height, camera.near, camera.far);
-    fragmentUniforms.viewPos = camera.position;
+    // Camera Matrices
+    glm::mat4 view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
+    glm::mat4 projection = glm::perspective(glm::radians(camera.fov), (float)width / (float)height, camera.near, camera.far);
+    renderManager->m_fragmentUniforms.viewPos = camera.position;
 
-    // shadow map
+    // --- Shadow Pass ---
     float aspect = static_cast<float>(width) / static_cast<float>(height);
-    shadowManager->updateCascades(vertexUniforms.view, -fragmentUniforms.lightDir, aspect);
-    RenderToShadowMaps(commandBuffer);
+    renderManager->getShadowManager()->updateCascades(&camera, view, -renderManager->m_fragmentUniforms.lightDir, aspect);
 
-    // create the color target
+    ShadowManager *shadowManager = renderManager->getShadowManager();
+
     SDL_GPUColorTargetInfo colorTargetInfo{};
+    colorTargetInfo.texture = shadowManager->m_shadowMapTexture;
+    colorTargetInfo.clear_color = {1.f, 0.f, 0.f, 0.0f};
+    colorTargetInfo.load_op = SDL_GPU_LOADOP_CLEAR;
+    colorTargetInfo.store_op = SDL_GPU_STOREOP_STORE;
+
+    SDL_GPUViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.w = static_cast<float>(shadowManager->m_shadowMapResolution);
+    viewport.h = static_cast<float>(shadowManager->m_shadowMapResolution);
+    viewport.min_depth = 0.0f;
+    viewport.max_depth = 1.0f;
+
+    for (int cascadeIndex = 0; cascadeIndex < NUM_CASCADES; ++cascadeIndex)
+    {
+        colorTargetInfo.layer_or_depth_plane = cascadeIndex;
+
+        SDL_GPURenderPass *shadowPass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, nullptr);
+        SDL_BindGPUGraphicsPipeline(shadowPass, shadowManager->m_shadowPipeline);
+
+        const Cascade &cascade = shadowManager->m_cascades[cascadeIndex];
+        const glm::mat4 &lightView = cascade.view;
+        const glm::mat4 &lightProj = cascade.projection;
+        const glm::mat4 lightViewProj = lightProj * lightView;
+
+        SDL_SetGPUViewport(shadowPass, &viewport);
+
+        renderManager->renderShadows(commandBuffer, shadowPass, lightViewProj);
+
+        SDL_EndGPURenderPass(shadowPass);
+    }
+
+    // --- Main Render Pass ---
+    colorTargetInfo = SDL_GPUColorTargetInfo();
     colorTargetInfo.texture = postProcess->m_colorTexture;
     colorTargetInfo.clear_color = {0.f, 0.f, 0.f, 1.0f};
     colorTargetInfo.load_op = SDL_GPU_LOADOP_CLEAR;
     colorTargetInfo.store_op = SDL_GPU_STOREOP_STORE;
 
-    // create the depth target
     SDL_GPUDepthStencilTargetInfo depthInfo{};
     depthInfo.texture = postProcess->m_depthTexture;
     depthInfo.clear_depth = 1.0f;
@@ -501,147 +266,26 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     depthInfo.stencil_load_op = SDL_GPU_LOADOP_CLEAR;
     depthInfo.stencil_store_op = SDL_GPU_STOREOP_STORE;
 
-    // begin a render pass
     SDL_GPURenderPass *renderPass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, &depthInfo);
 
-    glm::vec3 center{0.f, 0.f, 0.f};
-    renderManager->m_pbrManager->renderSkybox(
-        commandBuffer,
-        renderPass,
-        vertexUniforms.view,
-        vertexUniforms.projection);
+    // Render Skybox
+    renderManager->getPbrManager()->renderSkybox(commandBuffer, renderPass, view, projection);
 
-    // bind the pipeline
-    SDL_BindGPUGraphicsPipeline(renderPass, graphicsPipeline);
+    // Render Scene Objects
+    renderManager->renderScene(commandBuffer, renderPass, view, projection, camera.position);
 
-    // Push Scene-wide uniforms (Slot 0 for VS, Slot 0 for FS)
-    SDL_PushGPUVertexUniformData(commandBuffer, 0, &vertexUniforms, sizeof(vertexUniforms));       // VS binding 0
-    SDL_PushGPUFragmentUniformData(commandBuffer, 0, &fragmentUniforms, sizeof(fragmentUniforms)); // FS binding 0
-    SDL_PushGPUFragmentUniformData(commandBuffer, 2, &shadowManager->m_shadowUniforms, sizeof(shadowManager->m_shadowUniforms));
-
-    glm::mat4 vp = vertexUniforms.projection * vertexUniforms.view;
-    Frustum frustum = Frustum::fromMatrix(vp);
-
-    // --- Render Models ---
-    for (const auto &model : loadedModels)
-        for (const auto &node : model->nodes)
-        {
-            if (node.meshIndex < 0 || node.meshIndex > model->meshes.size() - 1)
-                continue;
-
-            const MeshData &mesh = model->meshes[node.meshIndex];
-            const glm::mat4 &world = node.worldTransform;
-
-            for (const auto &prim : mesh.primitives)
-            {
-                if (!PrimitiveInFrustum(prim, world, frustum))
-                    continue; // culled
-
-                // update per-node uniform data
-                vertexUniforms.model = node.worldTransform;
-                vertexUniforms.normalMatrix = glm::transpose(glm::inverse(vertexUniforms.model));
-                SDL_PushGPUVertexUniformData(commandBuffer, 0, &vertexUniforms, sizeof(vertexUniforms)); // Update VS UBO
-
-                // Get material (fallback to default)
-                Material *material = prim.material ? prim.material : &defaultMaterial;
-
-                // Populate material uniform struct
-                MaterialUniforms materialUniforms{};
-                materialUniforms.albedoFactor = material->albedo;
-                materialUniforms.emissiveFactor = material->emissiveColor;
-                materialUniforms.metallicFactor = material->metallic;
-                materialUniforms.roughnessFactor = material->roughness;
-                materialUniforms.occlusionStrength = 1.0f; // TODO: from texture
-                materialUniforms.uvScale = material->uvScale;
-                materialUniforms.hasAlbedoTexture = (material->albedoTexture.id != nullptr);
-                materialUniforms.hasNormalTexture = (material->normalTexture.id != nullptr);
-                materialUniforms.hasMetallicRoughnessTexture = (material->metallicRoughnessTexture.id != nullptr);
-                materialUniforms.hasOcclusionTexture = (material->occlusionTexture.id != nullptr);
-                materialUniforms.hasEmissiveTexture = (material->emissiveTexture.id != nullptr);
-
-                // Push Material uniforms (Slot 1 for FS)
-                SDL_PushGPUFragmentUniformData(commandBuffer, 1, &materialUniforms, sizeof(materialUniforms)); // FS binding 1
-
-                // --- Bind Textures (Slots 0-4 for FS) ---
-                SDL_GPUTextureSamplerBinding texBindings[9];
-
-                // Binding 0: Albedo
-                texBindings[0].texture = material->albedoTexture.id ? material->albedoTexture.id : defaultTexture;
-                texBindings[0].sampler = Utils::baseSampler;
-
-                // Binding 1: Normal
-                texBindings[1].texture = material->normalTexture.id ? material->normalTexture.id : defaultTexture;
-                texBindings[1].sampler = Utils::baseSampler;
-
-                // Binding 2: Metallic-Roughness
-                texBindings[2].texture = material->metallicRoughnessTexture.id ? material->metallicRoughnessTexture.id : defaultTexture; // Use white (1,1,1) -> (metallic=1, rough=1)
-                texBindings[2].sampler = Utils::baseSampler;
-
-                // Binding 3: Occlusion
-                texBindings[3].texture = material->occlusionTexture.id ? material->occlusionTexture.id : defaultTexture; // Use white (1.0) -> no occlusion
-                texBindings[3].sampler = Utils::baseSampler;
-
-                // Binding 4: Emissive
-                texBindings[4].texture = material->emissiveTexture.id ? material->emissiveTexture.id : defaultTexture; // Use black -> no emission
-                texBindings[4].sampler = Utils::baseSampler;
-
-                // Binding 5: Irradiance
-                texBindings[5].texture = renderManager->m_pbrManager->m_irradianceTexture;
-                texBindings[5].sampler = renderManager->m_pbrManager->m_cubeSampler;
-
-                // Binding 6: Prefilter
-                texBindings[6].texture = renderManager->m_pbrManager->m_prefilterTexture;
-                texBindings[6].sampler = renderManager->m_pbrManager->m_cubeSampler;
-
-                // Binding 7: Lut
-                texBindings[7].texture = renderManager->m_pbrManager->m_brdfTexture;
-                texBindings[7].sampler = renderManager->m_pbrManager->m_brdfSampler;
-
-                // Binding 8: Cascaded shadow map (2D array)
-                texBindings[8].texture = shadowManager->m_shadowMapTexture;
-                texBindings[8].sampler = shadowManager->m_shadowSampler;
-
-                SDL_BindGPUFragmentSamplers(renderPass, 0, texBindings, 9);
-
-                // bind vertex buffer
-                SDL_GPUBufferBinding bufferBinding{prim.vertexBuffer, 0};
-                SDL_BindGPUVertexBuffers(renderPass, 0, &bufferBinding, 1);
-
-                // bind the index buffer
-                if (!prim.indices.empty())
-                {
-                    SDL_GPUBufferBinding indexBinding = {prim.indexBuffer, 0};
-                    SDL_BindGPUIndexBuffer(renderPass, &indexBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
-                }
-
-                // issue a draw call
-                if (!prim.indices.empty())
-                    SDL_DrawGPUIndexedPrimitives(renderPass, (Uint32)prim.indices.size(), 1, 0, 0, 0);
-                else
-                    SDL_DrawGPUPrimitives(renderPass, (Uint32)prim.vertices.size(), 0, 0, 0);
-            }
-        }
-
-    // end the render pass
     SDL_EndGPURenderPass(renderPass);
 
-    // contruct depth
+    // --- Post Processing ---
     postProcess->copyDepth(commandBuffer);
-
-    // ssao pass
-    postProcess->computeGTAO(commandBuffer, vertexUniforms.projection, vertexUniforms.view, camera.near, camera.far);
-
-    // bloom pass
+    postProcess->computeGTAO(commandBuffer, projection, view, camera.near, camera.far);
     postProcess->downsample(commandBuffer);
     postProcess->upsample(commandBuffer);
-
-    // post process pass
     postProcess->postProcess(commandBuffer, swapchainTexture);
 
-    // render ui
+    // --- UI ---
     rootUI->render(commandBuffer, swapchainTexture);
 
-    // submit the command buffer
     SDL_SubmitGPUCommandBuffer(commandBuffer);
 
     return SDL_APP_CONTINUE;
@@ -696,19 +340,22 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
 {
     delete rootUI;
     delete systemMonitorUI;
-
     delete postProcess;
-    delete shadowManager;
+    delete renderManager;
 
-    for (const auto &model : loadedModels)
-        resourceManager->dispose(model);
+    // Cleanup Instances
+    for (RenderableModel *obj : renderableModels)
+    {
+        resourceManager->dispose(obj->model);
+        delete obj;
+    }
+    renderableModels.clear();
 
+    // Cleanup Resources
     resourceManager->dispose(hdrTexture);
 
-    SDL_ReleaseGPUSampler(device, Utils::baseSampler);
+    delete resourceManager;
 
-    if (graphicsPipeline)
-        SDL_ReleaseGPUGraphicsPipeline(device, graphicsPipeline);
     if (device)
         SDL_DestroyGPUDevice(device);
     if (window)

@@ -20,12 +20,6 @@ struct ShadowUniforms
     float paddin[3];
 };
 
-struct ShadowVertexUniforms
-{
-    glm::mat4 lightViewProj; // light VP for current cascade
-    glm::mat4 model;         // world transform for current draw
-};
-
 struct Cascade
 {
     glm::mat4 view;
@@ -38,7 +32,6 @@ public:
     ShadowManager();
     ~ShadowManager();
 
-    Camera *m_camera;
     int m_shadowMapResolution = 2048;
     float m_cascadeLambda = 0.5f;
 
@@ -49,11 +42,11 @@ public:
 
     // CPU-side uniform data
     ShadowUniforms m_shadowUniforms{};
-    ShadowVertexUniforms m_shadowVertexUniforms{};
     Cascade m_cascades[NUM_CASCADES];
 
     void renderUI() override;
     void updateCascades(
+        Camera *camera,
         const glm::mat4 &view,
         const glm::vec3 &lightDir,
         float aspect);
