@@ -3,10 +3,15 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <imgui.h>
 
-RenderManager::RenderManager(SDL_GPUDevice *device, SDL_Window *window, ResourceManager *resourceManager)
+RenderManager::RenderManager(
+    SDL_GPUDevice *device,
+    SDL_Window *window,
+    ResourceManager *resourceManager,
+    SDL_GPUSampleCount sampleCount)
     : m_device(device),
       m_window(window),
       m_resourceManager(resourceManager),
+      m_sampleCount(sampleCount),
       m_pbrPipeline(nullptr),
       m_baseSampler(nullptr),
       m_defaultTexture(nullptr)
@@ -15,7 +20,7 @@ RenderManager::RenderManager(SDL_GPUDevice *device, SDL_Window *window, Resource
     m_shadowManager = new ShadowManager();
 
     createDefaultResources();
-    createPipeline();
+    createPipeline(SDL_GPU_SAMPLECOUNT_4);
 
     m_fragmentUniforms.lightDir = glm::normalize(glm::vec3(-0.3f, -0.8f, -0.3f));
     m_fragmentUniforms.lightColor = glm::vec3(1.0f) * 6.0f;
@@ -46,6 +51,15 @@ void RenderManager::renderUI()
         ImGui::DragFloat3("Light Color", &m_fragmentUniforms.lightColor.x, 0.01f, 0.f);
 
         ImGui::TreePop();
+    }
+}
+
+void RenderManager::update(SDL_GPUSampleCount sampleCount)
+{
+    if (sampleCount != m_sampleCount)
+    {
+        SDL_ReleaseGPUGraphicsPipeline(m_device, m_pbrPipeline);
+        createPipeline(sampleCount);
     }
 }
 
@@ -109,8 +123,10 @@ void RenderManager::createDefaultResources()
     SDL_ReleaseGPUTransferBuffer(m_device, transferBuffer);
 }
 
-void RenderManager::createPipeline()
+void RenderManager::createPipeline(SDL_GPUSampleCount sampleCount)
 {
+    m_sampleCount = sampleCount;
+
     SDL_GPUShader *vertexShader = Utils::loadShader("src/shaders/pbr.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
     SDL_GPUShader *fragmentShader = Utils::loadShader("src/shaders/pbr.frag", 9, 3, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
@@ -142,6 +158,9 @@ void RenderManager::createPipeline()
     pipelineInfo.target_info.color_target_descriptions = colorTargetDesc;
     pipelineInfo.target_info.has_depth_stencil_target = true;
     pipelineInfo.target_info.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
+
+    pipelineInfo.multisample_state.sample_count = sampleCount;
+    pipelineInfo.multisample_state.enable_mask = false;
 
     pipelineInfo.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS;
     pipelineInfo.depth_stencil_state.enable_depth_test = true;

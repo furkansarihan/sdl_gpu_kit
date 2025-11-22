@@ -1,12 +1,13 @@
 #include "post_process.h"
 
+#include <SDL3/SDL_gpu.h>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <imgui.h>
 
 #include "../utils/utils.h"
 
-PostProcess::PostProcess()
+PostProcess::PostProcess(SDL_GPUSampleCount sampleCount)
 {
     m_fullscreenVert = Utils::loadShader("src/shaders/fullscreen.vert", 0, 0, SDL_GPU_SHADERSTAGE_VERTEX);
     m_postProcessFrag = Utils::loadShader("src/shaders/post.frag", 3, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
@@ -17,6 +18,7 @@ PostProcess::PostProcess()
     m_gtaoGenFrag = Utils::loadShader("src/shaders/gtao.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
     m_gtaoBlurFrag = Utils::loadShader("src/shaders/ssao_blur.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
     m_depthCopyFrag = Utils::loadShader("src/shaders/depth_copy.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    m_depthResolveFrag = Utils::loadShader("src/shaders/depth_resolve.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
     SDL_GPUColorTargetDescription colorTargetDesc[1];
     colorTargetDesc[0] = {};
@@ -60,6 +62,20 @@ PostProcess::PostProcess()
     pp1.target_info.color_target_descriptions = &colorOut;
 
     m_depthCopyPipeline = SDL_CreateGPUGraphicsPipeline(Utils::device, &pp1);
+
+    // depth resolve
+    SDL_GPUGraphicsPipelineCreateInfo pp2{};
+    pp2.vertex_shader = m_fullscreenVert;
+    pp2.fragment_shader = m_depthResolveFrag;
+    pp2.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+
+    SDL_GPUColorTargetDescription colorOut2{};
+    colorOut2.format = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
+
+    pp2.target_info.num_color_targets = 1;
+    pp2.target_info.color_target_descriptions = &colorOut2;
+
+    m_depthResolvePipeline = SDL_CreateGPUGraphicsPipeline(Utils::device, &pp2);
 
     // 1. GTAO Generation Pipeline (Output: RG8 or RG16F)
     SDL_GPUColorTargetDescription gtaoTargetDesc{};
@@ -110,6 +126,8 @@ PostProcess::PostProcess()
         m_gtaoParams.stepsPerSlice = 4.0f;
         m_gtaoParams.maxLevel = 0; // Mip level for depth sampling
     }
+
+    m_sampleCount = sampleCount;
 }
 
 PostProcess::~PostProcess()
@@ -134,6 +152,60 @@ void PostProcess::renderUI()
 {
     if (!ImGui::CollapsingHeader("Post Process", ImGuiTreeNodeFlags_DefaultOpen))
         return;
+
+    if (ImGui::TreeNode("MSAA"))
+    {
+        const char *msaaOptions[] = {"1x", "2x", "4x", "8x"};
+        SDL_GPUSampleCount msaaValues[] = {
+            SDL_GPU_SAMPLECOUNT_1,
+            SDL_GPU_SAMPLECOUNT_2,
+            SDL_GPU_SAMPLECOUNT_4,
+            SDL_GPU_SAMPLECOUNT_8};
+
+        int currentIndex = 0;
+        switch (m_sampleCount)
+        {
+        case SDL_GPU_SAMPLECOUNT_1:
+            currentIndex = 0;
+            break;
+        case SDL_GPU_SAMPLECOUNT_2:
+            currentIndex = 1;
+            break;
+        case SDL_GPU_SAMPLECOUNT_4:
+            currentIndex = 2;
+            break;
+        case SDL_GPU_SAMPLECOUNT_8:
+            currentIndex = 3;
+            break;
+        }
+
+        if (ImGui::BeginCombo("Sample Count", msaaOptions[currentIndex]))
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                bool isSupported = SDL_GPUTextureSupportsSampleCount(Utils::device, SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT, msaaValues[i]);
+
+                if (!isSupported)
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                    ImGui::Selectable(msaaOptions[i], false, ImGuiSelectableFlags_Disabled);
+                    ImGui::PopStyleColor();
+                }
+                else
+                {
+                    bool isSelected = (currentIndex == i);
+                    if (ImGui::Selectable(msaaOptions[i], isSelected))
+                    {
+                        m_sampleCount = msaaValues[i];
+                    }
+                    if (isSelected)
+                        ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::TreePop();
+    }
 
     if (ImGui::TreeNode("Tone Mapping"))
     {
@@ -204,10 +276,8 @@ void PostProcess::renderUI()
     {
         ImGui::Text("Color");
         ImGui::Image((ImTextureID)(m_colorTexture), ImVec2(m_UBO.screenSize.x * 0.2f, m_UBO.screenSize.y * 0.2f));
-        // ImGui::Text("Depth");
-        // ImGui::Image((ImTextureID)(m_depthTexture), ImVec2(m_UBO.screenSize.x * 0.2f, m_UBO.screenSize.y * 0.2f));
-        ImGui::Text("Depth - Copy");
-        ImGui::Image((ImTextureID)(m_depthCopyTexture), ImVec2(m_UBO.screenSize.x * 0.2f, m_UBO.screenSize.y * 0.2f));
+        ImGui::Text("Depth");
+        ImGui::Image((ImTextureID)(m_depthTexture), ImVec2(m_UBO.screenSize.x * 0.2f, m_UBO.screenSize.y * 0.2f));
 
         ImGui::TreePop();
     }
@@ -218,8 +288,36 @@ void PostProcess::update(glm::ivec2 screenSize)
     m_UBO.screenSize = screenSize;
 
     static Uint32 lastW = 0, lastH = 0;
-    if (lastW != screenSize.x || lastH != screenSize.y)
+    static SDL_GPUSampleCount lastSampleCount;
+    if (lastW != screenSize.x || lastH != screenSize.y || lastSampleCount != m_sampleCount)
     {
+        if (m_msaaColorTexture)
+            SDL_ReleaseGPUTexture(Utils::device, m_msaaColorTexture);
+        if (m_msaaDepthTexture)
+            SDL_ReleaseGPUTexture(Utils::device, m_msaaDepthTexture);
+
+        // -MSAA Color Target
+        SDL_GPUTextureCreateInfo msaaColorInfo{};
+        msaaColorInfo.format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
+        msaaColorInfo.width = screenSize.x;
+        msaaColorInfo.height = screenSize.y;
+        msaaColorInfo.num_levels = 1;
+        msaaColorInfo.type = SDL_GPU_TEXTURETYPE_2D;
+        msaaColorInfo.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET; // Not sampled directly
+        msaaColorInfo.sample_count = m_sampleCount;
+        m_msaaColorTexture = SDL_CreateGPUTexture(Utils::device, &msaaColorInfo);
+
+        // MSAA Depth Target
+        SDL_GPUTextureCreateInfo msaaDepthInfo{};
+        msaaDepthInfo.format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
+        msaaDepthInfo.width = screenSize.x;
+        msaaDepthInfo.height = screenSize.y;
+        msaaDepthInfo.num_levels = 1;
+        msaaDepthInfo.type = SDL_GPU_TEXTURETYPE_2D;
+        msaaDepthInfo.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET; // Not sampled directly
+        msaaDepthInfo.sample_count = m_sampleCount;
+        m_msaaDepthTexture = SDL_CreateGPUTexture(Utils::device, &msaaDepthInfo);
+
         if (m_colorTexture)
             SDL_ReleaseGPUTexture(Utils::device, m_colorTexture);
 
@@ -256,27 +354,13 @@ void PostProcess::update(glm::ivec2 screenSize)
 
         SDL_GPUTextureCreateInfo depthInfo{};
         depthInfo.type = SDL_GPU_TEXTURETYPE_2D;
-        depthInfo.format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
+        depthInfo.format = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
         depthInfo.width = screenSize.x;
         depthInfo.height = screenSize.y;
         depthInfo.layer_count_or_depth = 1;
         depthInfo.num_levels = 1;
-        depthInfo.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        depthInfo.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
         m_depthTexture = SDL_CreateGPUTexture(Utils::device, &depthInfo);
-
-        if (m_depthCopyTexture)
-            SDL_ReleaseGPUTexture(Utils::device, m_depthCopyTexture);
-
-        SDL_GPUTextureCreateInfo depthCopyInfo{};
-        depthCopyInfo.type = SDL_GPU_TEXTURETYPE_2D;
-        depthCopyInfo.format = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
-        depthCopyInfo.width = screenSize.x;
-        depthCopyInfo.height = screenSize.y;
-        depthCopyInfo.num_levels = 1;
-        depthCopyInfo.layer_count_or_depth = 1;
-        depthCopyInfo.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
-
-        m_depthCopyTexture = SDL_CreateGPUTexture(Utils::device, &depthCopyInfo);
 
         if (m_gtaoRawTexture)
             SDL_ReleaseGPUTexture(Utils::device, m_gtaoRawTexture);
@@ -305,6 +389,7 @@ void PostProcess::update(glm::ivec2 screenSize)
 
         lastW = screenSize.x;
         lastH = screenSize.y;
+        lastSampleCount = m_sampleCount;
     }
 }
 
@@ -366,20 +451,23 @@ void PostProcess::upsample(SDL_GPUCommandBuffer *commandBuffer)
     }
 }
 
-void PostProcess::copyDepth(SDL_GPUCommandBuffer *cmd)
+void PostProcess::resolveDepth(SDL_GPUCommandBuffer *cmd)
 {
     SDL_GPUColorTargetInfo target{};
-    target.texture = m_depthCopyTexture;
+    target.texture = m_depthTexture;
     target.clear_color = {0, 0, 0, 0};
     target.load_op = SDL_GPU_LOADOP_CLEAR;
     target.store_op = SDL_GPU_STOREOP_STORE;
 
     SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &target, 1, nullptr);
 
-    SDL_BindGPUGraphicsPipeline(pass, m_depthCopyPipeline);
+    if (m_sampleCount == SDL_GPU_SAMPLECOUNT_1)
+        SDL_BindGPUGraphicsPipeline(pass, m_depthCopyPipeline);
+    else
+        SDL_BindGPUGraphicsPipeline(pass, m_depthResolvePipeline);
 
     SDL_GPUTextureSamplerBinding binding{};
-    binding.texture = m_depthTexture;
+    binding.texture = m_msaaDepthTexture;
     binding.sampler = m_clampedSampler;
 
     SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
@@ -435,7 +523,7 @@ void PostProcess::computeGTAO(
         SDL_BindGPUGraphicsPipeline(genPass, m_gtaoGenPipeline);
 
         // Bind Depth texture
-        SDL_GPUTextureSamplerBinding depthBind = {m_depthCopyTexture, m_clampedSampler};
+        SDL_GPUTextureSamplerBinding depthBind = {m_depthTexture, m_clampedSampler};
         SDL_BindGPUFragmentSamplers(genPass, 0, &depthBind, 1);
 
         // Push GTAO parameters

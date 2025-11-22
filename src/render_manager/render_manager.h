@@ -61,12 +61,18 @@ public:
 class RenderManager : public BaseUI
 {
 public:
-    RenderManager(SDL_GPUDevice *device, SDL_Window *window, ResourceManager *resourceManager);
+    RenderManager(
+        SDL_GPUDevice *device,
+        SDL_Window *window,
+        ResourceManager *resourceManager,
+        SDL_GPUSampleCount sampleCount);
     ~RenderManager();
 
     FragmentUniforms m_fragmentUniforms;
 
     void renderUI() override;
+
+    void update(SDL_GPUSampleCount sampleCount);
 
     // Management
     void addRenderable(Renderable *renderable);
@@ -111,6 +117,8 @@ private:
 
     std::vector<Renderable *> m_renderables;
 
-    void createPipeline();
+    SDL_GPUSampleCount m_sampleCount;
+
+    void createPipeline(SDL_GPUSampleCount sampleCount);
     void createDefaultResources();
 };

@@ -114,10 +114,12 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     Utils::device = device;
     Utils::window = window;
 
+    SDL_GPUSampleCount msaaSampleCount = Utils::getHighestSupportedMSAA();
+
     // Initialize Managers
     resourceManager = new ResourceManager(device);
-    renderManager = new RenderManager(device, window, resourceManager);
-    postProcess = new PostProcess();
+    renderManager = new RenderManager(device, window, resourceManager, msaaSampleCount);
+    postProcess = new PostProcess(msaaSampleCount);
     postProcess->update(screenSize);
 
     // Load Assets
@@ -206,6 +208,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     }
 
     postProcess->update({width, height});
+    renderManager->update(postProcess->m_sampleCount);
 
     // Camera Matrices
     glm::mat4 view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
@@ -251,20 +254,30 @@ SDL_AppResult SDL_AppIterate(void *appstate)
         SDL_EndGPURenderPass(shadowPass);
     }
 
-    // --- Main Render Pass ---
+    // 1. Setup Color Target: Render to MSAA, Resolve to Normal
     colorTargetInfo = SDL_GPUColorTargetInfo();
-    colorTargetInfo.texture = postProcess->m_colorTexture;
+    colorTargetInfo.texture = postProcess->m_msaaColorTexture; // Render to MSAA
     colorTargetInfo.clear_color = {0.f, 0.f, 0.f, 1.0f};
     colorTargetInfo.load_op = SDL_GPU_LOADOP_CLEAR;
-    colorTargetInfo.store_op = SDL_GPU_STOREOP_STORE;
+    colorTargetInfo.store_op = SDL_GPU_STOREOP_RESOLVE;            // Resolve automatically
+    colorTargetInfo.resolve_texture = postProcess->m_colorTexture; // Destination
 
+    // 2. Setup Depth Target: Render to MSAA
     SDL_GPUDepthStencilTargetInfo depthInfo{};
-    depthInfo.texture = postProcess->m_depthTexture;
+    depthInfo.texture = postProcess->m_msaaDepthTexture; // Render to MSAA
     depthInfo.clear_depth = 1.0f;
     depthInfo.load_op = SDL_GPU_LOADOP_CLEAR;
-    depthInfo.store_op = SDL_GPU_STOREOP_STORE;
+    depthInfo.store_op = SDL_GPU_STOREOP_STORE; // Store MSAA depth for manual resolve later
     depthInfo.stencil_load_op = SDL_GPU_LOADOP_CLEAR;
     depthInfo.stencil_store_op = SDL_GPU_STOREOP_STORE;
+
+    // TODO: test
+    // no msaa
+    if (postProcess->m_sampleCount == SDL_GPU_SAMPLECOUNT_1)
+    {
+        colorTargetInfo.texture = postProcess->m_colorTexture;
+        colorTargetInfo.store_op = SDL_GPU_STOREOP_STORE;
+    }
 
     SDL_GPURenderPass *renderPass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, &depthInfo);
 
@@ -277,7 +290,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     SDL_EndGPURenderPass(renderPass);
 
     // --- Post Processing ---
-    postProcess->copyDepth(commandBuffer);
+    postProcess->resolveDepth(commandBuffer);
     postProcess->computeGTAO(commandBuffer, projection, view, camera.near, camera.far);
     postProcess->downsample(commandBuffer);
     postProcess->upsample(commandBuffer);

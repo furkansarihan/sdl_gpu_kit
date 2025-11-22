@@ -57,7 +57,7 @@ struct GTAOParamsUBO
 class PostProcess : public BaseUI
 {
 public:
-    PostProcess();
+    PostProcess(SDL_GPUSampleCount sampleCount);
     ~PostProcess();
 
     PostProcessFragmentUBO m_UBO;
@@ -66,10 +66,13 @@ public:
     GTAOParamsUBO m_gtaoParams;
     float m_gtaoPower;
 
+    SDL_GPUSampleCount m_sampleCount;
+
     SDL_GPUSampler *m_clampedSampler = nullptr;
+    SDL_GPUTexture *m_msaaColorTexture = nullptr;
+    SDL_GPUTexture *m_msaaDepthTexture = nullptr;
     SDL_GPUTexture *m_colorTexture = nullptr;
     SDL_GPUTexture *m_depthTexture = nullptr;
-    SDL_GPUTexture *m_depthCopyTexture = nullptr;
     SDL_GPUTexture *m_gtaoRawTexture = nullptr;  // Raw GTAO result (RG format)
     SDL_GPUTexture *m_gtaoBlurTexture = nullptr; // Final blurred GTAO
 
@@ -80,6 +83,7 @@ public:
     SDL_GPUGraphicsPipeline *m_bloomDownPipeline = nullptr;
     SDL_GPUGraphicsPipeline *m_bloomUpPipeline = nullptr;
     SDL_GPUGraphicsPipeline *m_depthCopyPipeline = nullptr;
+    SDL_GPUGraphicsPipeline *m_depthResolvePipeline = nullptr;
     SDL_GPUGraphicsPipeline *m_gtaoGenPipeline = nullptr;
     SDL_GPUGraphicsPipeline *m_gtaoBlurPipeline = nullptr;
 
@@ -88,6 +92,7 @@ public:
     SDL_GPUShader *m_bloomDownFrag = nullptr;
     SDL_GPUShader *m_bloomUpFrag = nullptr;
     SDL_GPUShader *m_depthCopyFrag = nullptr;
+    SDL_GPUShader *m_depthResolveFrag = nullptr;
     SDL_GPUShader *m_gtaoGenFrag = nullptr;
     SDL_GPUShader *m_gtaoBlurFrag = nullptr;
 
@@ -95,7 +100,7 @@ public:
     void update(glm::ivec2 screenSize);
     void downsample(SDL_GPUCommandBuffer *commandBuffer);
     void upsample(SDL_GPUCommandBuffer *commandBuffer);
-    void copyDepth(SDL_GPUCommandBuffer *commandBuffer);
+    void resolveDepth(SDL_GPUCommandBuffer *commandBuffer);
     void computeGTAO(
         SDL_GPUCommandBuffer *commandBuffer,
         const glm::mat4 &projectionMatrix,

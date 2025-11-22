@@ -171,4 +171,27 @@ public:
 
         return shader;
     }
+
+    static SDL_GPUSampleCount getHighestSupportedMSAA()
+    {
+        SDL_GPUTextureFormat format = SDL_GetGPUSwapchainTextureFormat(device, window);
+
+        // Check from highest to lowest
+        const SDL_GPUSampleCount sampleCounts[] = {
+            SDL_GPU_SAMPLECOUNT_8,
+            SDL_GPU_SAMPLECOUNT_4,
+            SDL_GPU_SAMPLECOUNT_2,
+            SDL_GPU_SAMPLECOUNT_1};
+
+        for (SDL_GPUSampleCount count : sampleCounts)
+        {
+            if (SDL_GPUTextureSupportsSampleCount(device, format, count))
+            {
+                return count;
+            }
+        }
+
+        // Fallback to no MSAA if nothing is supported (shouldn't happen)
+        return SDL_GPU_SAMPLECOUNT_1;
+    }
 };
