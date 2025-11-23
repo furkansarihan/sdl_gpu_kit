@@ -493,8 +493,8 @@ void PostProcess::computeGTAO(
         1.0f / m_UBO.screenSize.y);
 
     m_gtaoParams.positionParams = glm::vec2(
-        invProj[0][0] * 2.0f,
-        invProj[1][1] * 2.0f);
+        invProj[0][0],
+        invProj[1][1]);
 
     m_gtaoParams.invFarPlane = 1.0f / farPlane;
 
