@@ -48,13 +48,23 @@ function(compile_shader SOURCE_FILE)
     # Ensure output directory exists
     file(MAKE_DIRECTORY ${OUTPUT_DIR})
     
+    # Create preprocessed shader output path
+    set(PREPROCESSED_OUTPUT ${OUTPUT})
+
+    # Preprocessing stage using glslc with -E flag
+    add_custom_command(
+        OUTPUT ${PREPROCESSED_OUTPUT}
+        COMMAND glslc -E ${SOURCE_FILE} -o ${PREPROCESSED_OUTPUT} -I ${CMAKE_SOURCE_DIR}/src
+        DEPENDS ${SOURCE_FILE}
+    )
+    
     if(APPLE)
         # GLSL -> SPIR-V
         set(SPV_OUTPUT ${OUTPUT}.spv)
         add_custom_command(
             OUTPUT ${SPV_OUTPUT}
-            COMMAND glslc ${SOURCE_FILE} -o ${SPV_OUTPUT} -I ${CMAKE_SOURCE_DIR}/src
-            DEPENDS ${SOURCE_FILE}
+            COMMAND glslc ${PREPROCESSED_OUTPUT} -o ${SPV_OUTPUT} -I ${CMAKE_SOURCE_DIR}/src
+            DEPENDS ${PREPROCESSED_OUTPUT}
         )
         
         # SPIR-V -> Metal
@@ -88,8 +98,8 @@ function(compile_shader SOURCE_FILE)
         # Non-Apple platforms: just compile to SPIR-V
         add_custom_command(
             OUTPUT ${OUTPUT}
-            COMMAND glslc ${SOURCE_FILE} -o ${OUTPUT} -I ${CMAKE_SOURCE_DIR}/src
-            DEPENDS ${SOURCE_FILE}
+            COMMAND glslc ${PREPROCESSED_OUTPUT} -o ${OUTPUT} -I ${CMAKE_SOURCE_DIR}/src
+            DEPENDS ${PREPROCESSED_OUTPUT}
         )
         set(FINAL_OUTPUT ${OUTPUT})
     endif()

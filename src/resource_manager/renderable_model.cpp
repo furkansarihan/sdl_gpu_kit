@@ -17,12 +17,13 @@ bool PrimitiveInFrustum(const PrimitiveData &prim, const glm::mat4 &worldTransfo
     return frustum.containsSphere(worldCenter, worldRadius);
 }
 
-void RenderableModel::draw(SDL_GPUCommandBuffer *cmd,
-                           SDL_GPURenderPass *pass,
-                           const glm::mat4 &view,
-                           const glm::mat4 &projection,
-                           const glm::vec3 &camPos,
-                           Frustum &frustum)
+void RenderableModel::renderModel(
+    bool blend,
+    SDL_GPUCommandBuffer *cmd,
+    SDL_GPURenderPass *pass,
+    const glm::mat4 &view,
+    const glm::mat4 &projection,
+    Frustum &frustum)
 {
     // Material fallback
     Material defaultMaterial("default");
@@ -41,6 +42,14 @@ void RenderableModel::draw(SDL_GPUCommandBuffer *cmd,
 
         for (const auto &prim : mesh.primitives)
         {
+            Material *mat = prim.material ? prim.material : &defaultMaterial;
+
+            if (blend && mat->alphaMode != AlphaMode::Blend)
+                continue;
+
+            if (!blend && mat->alphaMode == AlphaMode::Blend)
+                continue;
+
             if (!PrimitiveInFrustum(prim, world, frustum))
                 continue;
 
@@ -50,19 +59,20 @@ void RenderableModel::draw(SDL_GPUCommandBuffer *cmd,
             SDL_PushGPUVertexUniformData(cmd, 0, &vUniforms, sizeof(vUniforms));
 
             // Material Setup
-            Material *mat = prim.material ? prim.material : &defaultMaterial;
             MaterialUniforms matUniforms{};
             matUniforms.albedoFactor = mat->albedo;
             matUniforms.emissiveFactor = mat->emissiveColor;
             matUniforms.metallicFactor = mat->metallic;
             matUniforms.roughnessFactor = mat->roughness;
             matUniforms.occlusionStrength = 1.0f;
+            matUniforms.alphaCutoff = mat->alphaCutoff;
             matUniforms.uvScale = mat->uvScale;
             matUniforms.hasAlbedoTexture = (mat->albedoTexture.id != nullptr);
             matUniforms.hasNormalTexture = (mat->normalTexture.id != nullptr);
             matUniforms.hasMetallicRoughnessTexture = (mat->metallicRoughnessTexture.id != nullptr);
             matUniforms.hasOcclusionTexture = (mat->occlusionTexture.id != nullptr);
             matUniforms.hasEmissiveTexture = (mat->emissiveTexture.id != nullptr);
+            matUniforms.hasOpacityTexture = (mat->opacityTexture.id != nullptr);
 
             SDL_PushGPUFragmentUniformData(cmd, 1, &matUniforms, sizeof(matUniforms));
 
@@ -87,10 +97,31 @@ void RenderableModel::draw(SDL_GPUCommandBuffer *cmd,
     }
 }
 
-void RenderableModel::drawShadow(SDL_GPUCommandBuffer *cmd,
-                                 SDL_GPURenderPass *pass,
-                                 const glm::mat4 &viewProj,
-                                 Frustum &frustum)
+void RenderableModel::renderOpaque(
+    SDL_GPUCommandBuffer *cmd,
+    SDL_GPURenderPass *pass,
+    const glm::mat4 &view,
+    const glm::mat4 &projection,
+    Frustum &frustum)
+{
+    renderModel(false, cmd, pass, view, projection, frustum);
+}
+
+void RenderableModel::renderTransparent(
+    SDL_GPUCommandBuffer *cmd,
+    SDL_GPURenderPass *pass,
+    const glm::mat4 &view,
+    const glm::mat4 &projection,
+    Frustum &frustum)
+{
+    renderModel(true, cmd, pass, view, projection, frustum);
+}
+
+void RenderableModel::renderShadow(
+    SDL_GPUCommandBuffer *cmd,
+    SDL_GPURenderPass *pass,
+    const glm::mat4 &viewProj,
+    Frustum &frustum)
 {
     ShadowVertexUniforms shadowUniforms{};
     shadowUniforms.lightViewProj = viewProj;
@@ -129,24 +160,25 @@ void RenderableModel::drawShadow(SDL_GPUCommandBuffer *cmd,
 
 void RenderableModel::bindTextures(SDL_GPURenderPass *pass, Material *mat)
 {
-    SDL_GPUTextureSamplerBinding bindings[9];
-    SDL_GPUTexture *def = manager->getDefaultTexture();
-    SDL_GPUSampler *samp = manager->getBaseSampler();
+    SDL_GPUTextureSamplerBinding bindings[10];
+    SDL_GPUTexture *def = manager->m_defaultTexture;
+    SDL_GPUSampler *samp = manager->m_baseSampler;
 
     bindings[0] = {mat->albedoTexture.id ? mat->albedoTexture.id : def, samp};
     bindings[1] = {mat->normalTexture.id ? mat->normalTexture.id : def, samp};
     bindings[2] = {mat->metallicRoughnessTexture.id ? mat->metallicRoughnessTexture.id : def, samp};
     bindings[3] = {mat->occlusionTexture.id ? mat->occlusionTexture.id : def, samp};
     bindings[4] = {mat->emissiveTexture.id ? mat->emissiveTexture.id : def, samp};
+    bindings[5] = {mat->opacityTexture.id ? mat->opacityTexture.id : def, samp};
 
     // PBR Global textures (Irradiance, etc) retrieved from Manager
-    PbrManager *pbr = manager->getPbrManager();
-    bindings[5] = {pbr->m_irradianceTexture, pbr->m_cubeSampler};
-    bindings[6] = {pbr->m_prefilterTexture, pbr->m_cubeSampler};
-    bindings[7] = {pbr->m_brdfTexture, pbr->m_brdfSampler};
+    PbrManager *pbr = manager->m_pbrManager;
+    bindings[6] = {pbr->m_irradianceTexture, pbr->m_cubeSampler};
+    bindings[7] = {pbr->m_prefilterTexture, pbr->m_cubeSampler};
+    bindings[8] = {pbr->m_brdfTexture, pbr->m_brdfSampler};
 
     // Shadowmap
-    bindings[8] = {manager->getShadowManager()->m_shadowMapTexture, manager->getShadowManager()->m_shadowSampler};
+    bindings[9] = {manager->m_shadowManager->m_shadowMapTexture, manager->m_shadowManager->m_shadowSampler};
 
-    SDL_BindGPUFragmentSamplers(pass, 0, bindings, 9);
+    SDL_BindGPUFragmentSamplers(pass, 0, bindings, 10);
 }

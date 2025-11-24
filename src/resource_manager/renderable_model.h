@@ -19,16 +19,31 @@ public:
     {
     }
 
-    void draw(SDL_GPUCommandBuffer *cmd,
-              SDL_GPURenderPass *pass,
-              const glm::mat4 &view,
-              const glm::mat4 &projection,
-              const glm::vec3 &camPos,
-              Frustum &frustum) override;
-    void drawShadow(SDL_GPUCommandBuffer *cmd,
-                    SDL_GPURenderPass *pass,
-                    const glm::mat4 &viewProj,
-                    Frustum &frustum) override;
+    void renderModel(
+        bool blend,
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &view,
+        const glm::mat4 &projection,
+        Frustum &frustum);
+
+    void renderOpaque(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &view,
+        const glm::mat4 &projection,
+        Frustum &frustum) override;
+    void renderTransparent(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &view,
+        const glm::mat4 &projection,
+        Frustum &frustum) override;
+    void renderShadow(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &viewProj,
+        Frustum &frustum) override;
 
 private:
     void bindTextures(SDL_GPURenderPass *pass, Material *mat);

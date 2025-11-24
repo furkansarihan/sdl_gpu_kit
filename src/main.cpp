@@ -119,6 +119,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     // Initialize Managers
     resourceManager = new ResourceManager(device);
     renderManager = new RenderManager(device, window, resourceManager, msaaSampleCount);
+    renderManager->update(screenSize, msaaSampleCount);
     postProcess = new PostProcess(msaaSampleCount);
     postProcess->update(screenSize);
 
@@ -126,6 +127,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     std::string exePath = Utils::getExecutablePath();
     const char *modelPath = "assets/models/DamagedHelmet.glb";
     // const char *modelPath = "assets/models/ABeautifulGame.glb";
+    // const char *modelPath = "assets/models/AlphaBlendModeTest.glb";
     ModelData *model = resourceManager->loadModel(std::string(exePath + "/" + modelPath).c_str());
 
     // Create Renderable Instance
@@ -147,7 +149,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
         params.dataType = TextureDataType::Float32;
         params.sample = true;
         hdrTexture = resourceManager->loadTextureFromFile(params, std::string(exePath + "/" + hdriPath));
-        renderManager->getPbrManager()->updateEnvironmentTexture(hdrTexture);
+        renderManager->m_pbrManager->updateEnvironmentTexture(hdrTexture);
     }
 
     // Setup ImGui
@@ -182,7 +184,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     rootUI->add(systemMonitorUI);
     rootUI->add(postProcess);
     rootUI->add(renderManager);
-    rootUI->add(renderManager->getShadowManager());
+    rootUI->add(renderManager->m_shadowManager);
 
     return SDL_APP_CONTINUE;
 }
@@ -208,7 +210,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     }
 
     postProcess->update({width, height});
-    renderManager->update(postProcess->m_sampleCount);
+    renderManager->update({width, height}, postProcess->m_sampleCount);
 
     // Camera Matrices
     glm::mat4 view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
@@ -217,9 +219,9 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
     // --- Shadow Pass ---
     float aspect = static_cast<float>(width) / static_cast<float>(height);
-    renderManager->getShadowManager()->updateCascades(&camera, view, -renderManager->m_fragmentUniforms.lightDir, aspect);
+    renderManager->m_shadowManager->updateCascades(&camera, view, -renderManager->m_fragmentUniforms.lightDir, aspect);
 
-    ShadowManager *shadowManager = renderManager->getShadowManager();
+    ShadowManager *shadowManager = renderManager->m_shadowManager;
 
     SDL_GPUColorTargetInfo colorTargetInfo{};
     colorTargetInfo.texture = shadowManager->m_shadowMapTexture;
@@ -249,7 +251,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
         SDL_SetGPUViewport(shadowPass, &viewport);
 
-        renderManager->renderShadows(commandBuffer, shadowPass, lightViewProj);
+        renderManager->renderShadow(commandBuffer, shadowPass, lightViewProj);
 
         SDL_EndGPURenderPass(shadowPass);
     }
@@ -282,15 +284,49 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     SDL_GPURenderPass *renderPass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, &depthInfo);
 
     // Render Skybox
-    renderManager->getPbrManager()->renderSkybox(commandBuffer, renderPass, view, projection);
+    renderManager->m_pbrManager->renderSkybox(commandBuffer, renderPass, view, projection);
 
     // Render Scene Objects
-    renderManager->renderScene(commandBuffer, renderPass, view, projection, camera.position);
+    renderManager->renderOpaque(commandBuffer, renderPass, view, projection, camera.position);
 
     SDL_EndGPURenderPass(renderPass);
 
-    // --- Post Processing ---
+    // Resolve msaa depth before transparent pass
     postProcess->resolveDepth(commandBuffer);
+
+    // Order Independent Transparency pass (Accum + Reveal)
+    SDL_GPUColorTargetInfo oitTargets[2];
+    // Accum: Clear to ZERO (0,0,0,0)
+    oitTargets[0] = SDL_GPUColorTargetInfo{};
+    oitTargets[0].texture = renderManager->m_accumTexture;
+    oitTargets[0].load_op = SDL_GPU_LOADOP_CLEAR;
+    oitTargets[0].clear_color = {0, 0, 0, 0};
+    // Reveal: Clear to ONE (1,1,1,1)
+    oitTargets[1] = SDL_GPUColorTargetInfo{};
+    oitTargets[1].texture = renderManager->m_revealTexture;
+    oitTargets[1].load_op = SDL_GPU_LOADOP_CLEAR;
+    oitTargets[1].clear_color = {1, 1, 1, 1};
+
+    // Depth: Load existing depth, DO NOT write
+    depthInfo.texture = postProcess->m_depthTexture;
+    depthInfo.load_op = SDL_GPU_LOADOP_LOAD;
+    depthInfo.store_op = SDL_GPU_STOREOP_STORE;
+    depthInfo.stencil_load_op = SDL_GPU_LOADOP_LOAD;
+    depthInfo.stencil_store_op = SDL_GPU_STOREOP_STORE;
+
+    SDL_GPURenderPass *oitPass = SDL_BeginGPURenderPass(commandBuffer, oitTargets, 2, &depthInfo);
+    renderManager->renderTransparent(commandBuffer, oitPass, view, projection, camera.position);
+    SDL_EndGPURenderPass(oitPass);
+
+    // Composite pass (merge transparency and color)
+    colorTargetInfo.texture = postProcess->m_colorTexture;
+    colorTargetInfo.load_op = SDL_GPU_LOADOP_LOAD; // Load opaque result
+
+    SDL_GPURenderPass *compPass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, nullptr);
+    renderManager->renderComposite(commandBuffer, compPass);
+    SDL_EndGPURenderPass(compPass);
+
+    // --- Post Processing ---
     postProcess->computeGTAO(commandBuffer, projection, view, camera.near, camera.far);
     postProcess->downsample(commandBuffer);
     postProcess->upsample(commandBuffer);

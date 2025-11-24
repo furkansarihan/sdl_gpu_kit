@@ -332,6 +332,17 @@ ModelData *ResourceManager::loadModel(const std::string &path)
         const auto &gltfMat = model.materials[i];
         Material *mat = new Material(gltfMat.name);
 
+        // Load Alpha Mode
+        if (gltfMat.alphaMode == "MASK")
+        {
+            mat->alphaMode = AlphaMode::Mask;
+            mat->alphaCutoff = (float)gltfMat.alphaCutoff;
+        }
+        else if (gltfMat.alphaMode == "BLEND")
+            mat->alphaMode = AlphaMode::Blend;
+        else
+            mat->alphaMode = AlphaMode::Opaque;
+
         const auto &pbr = gltfMat.pbrMetallicRoughness;
         if (pbr.baseColorFactor.size() == 4)
             mat->albedo = glm::make_vec4(pbr.baseColorFactor.data());

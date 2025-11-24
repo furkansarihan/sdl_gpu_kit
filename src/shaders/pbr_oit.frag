@@ -7,8 +7,8 @@ layout(location = 2) in vec2 fragUV;
 layout(location = 3) in vec3 fragTangent;
 layout(location = 4) in vec3 fragBitangent;
 
-// Fragment shader output
-layout(location = 0) out vec4 outColor;
+layout(location = 0) out vec4 outAccum;
+layout(location = 1) out float outReveal;
 
 // Scene-wide uniforms
 layout(binding = 0) uniform FragmentUniformBlock {
@@ -101,11 +101,6 @@ void main()
     if (material.hasOpacityTexture > 0) {
         float opacity = texture(opacityMap, uv).r;
         alpha *= opacity;
-    }
-
-    // Alpha Masking
-    if (material.alphaCutoff > 0.0 && alpha < material.alphaCutoff) {
-        discard;
     }
 
     // Emissive
@@ -216,29 +211,17 @@ void main()
     // --- Final Color ---
     vec3 color = ambient + Lo * visibility;
 
-    outColor = vec4(color, alpha);
-    // outColor = vec4(vec3(material.alphaCutoff), alpha);
-    // outColor = vec4(irradiance, 1.0);
-    // outColor = vec4(diffuse, 1.0);
-    // outColor = vec4(ambient, 1.0);
-    // outColor = vec4(specular, 1.0);
-    // outColor = vec4(albedo, 1.0);
-    // outColor = vec4(N, 1.0);
-    // outColor = vec4(fragTangent, 1.0);
-    // outColor = vec4(vec3(envBRDF.x), 1.0);
-    // outColor = vec4(vec3(envBRDF.y), 1.0);
-    // outColor = vec4(vec3(envBRDF.xy, 0.0), 1.0);
-    // outColor = vec4(vec3(F), 1.0);
-    // outColor = vec4(vec3(roughness), 1.0);
-    // outColor = vec4(vec3(metallic), 1.0);
-    // outColor = vec4(prefilteredColor, 1.0);
-    // outColor = vec4(texture(albedoMap, uv).rgb, 1.0);
-    // outColor = vec4(texture(emissiveMap, uv).rgb, 1.0);
-    // outColor = vec4(textureLod(irradianceMap, N, 0).rgb, 1.0);
-    // outColor = vec4(textureLod(irradianceMap, fragNormal, 0).rgb, 1.0);
-    // outColor = vec4(textureLod(prefilterMap, N, 0).rgb, 1.0);
-    // outColor = vec4(textureLod(prefilterMap, R, 0).rgb, 1.0);
-    // outColor = vec4(texture(brdfLUT, N.xy).rgb, 1.0);
-    
-    // outColor = vec4(textureLod(albedoMap, uv, 0.0).rgb, 1.0);
+    // Weight function by McGuire and Bavoil
+    // Adjust depth range as needed (assuming 0.0 - 1.0 depth)
+    float weight = clamp(pow(min(1.0, alpha * 10.0) + 0.01, 3.0) * 1e8 * pow(1.0 - gl_FragCoord.z * 0.9, 3.0), 1e-2, 3e3);
+
+    // Output to Accumulation Buffer
+    // RGB = premultiplied alpha * weight
+    // Alpha = weight
+    outAccum = vec4(color * alpha, alpha) * weight;
+
+    // Output to Revealage Buffer
+    // 'Zero' blend means we multiply destination by this value.
+    // 1.0 = fully revealed (transparent), 0.0 = fully occluded (opaque)
+    outReveal = alpha;
 }

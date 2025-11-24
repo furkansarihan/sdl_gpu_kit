@@ -22,16 +22,22 @@ struct Texture
     glm::vec2 uvScale = glm::vec2(1.f);
 };
 
+enum class AlphaMode { Opaque, Mask, Blend };
+
 class Material
 {
 public:
     std::string name;
+
+    AlphaMode alphaMode = AlphaMode::Opaque;
+    float alphaCutoff;
 
     Texture albedoTexture;
     Texture normalTexture;
     Texture metallicRoughnessTexture;
     Texture occlusionTexture;
     Texture emissiveTexture;
+    Texture opacityTexture;
 
     glm::vec2 uvScale;
     glm::vec4 albedo;
@@ -47,6 +53,7 @@ public:
           metallic(0.f),
           roughness(1.f),
           opacity(1.f),
+          alphaCutoff(0.f),
           emissiveColor(glm::vec4(0.f, 0.f, 0.f, 0.f))
     {
     }

@@ -34,16 +34,20 @@ struct MaterialUniforms
 {
     glm::vec4 albedoFactor;
     glm::vec4 emissiveFactor;
+
     float metallicFactor;
     float roughnessFactor;
     float occlusionStrength;
+    float alphaCutoff;
+
     int hasAlbedoTexture;
     int hasNormalTexture;
     int hasMetallicRoughnessTexture;
     int hasOcclusionTexture;
+
     int hasEmissiveTexture;
+    int hasOpacityTexture;
     glm::vec2 uvScale;
-    float padding[2];
 };
 
 class Renderable
@@ -51,11 +55,23 @@ class Renderable
 public:
     virtual ~Renderable() = default;
 
-    // Called during the main color pass
-    virtual void draw(SDL_GPUCommandBuffer *cmd, SDL_GPURenderPass *pass, const glm::mat4 &view, const glm::mat4 &projection, const glm::vec3 &camPos, Frustum &frustum) = 0;
-
-    // Called during the shadow pass
-    virtual void drawShadow(SDL_GPUCommandBuffer *cmd, SDL_GPURenderPass *pass, const glm::mat4 &viewProj, Frustum &frustum) = 0;
+    virtual void renderOpaque(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &view,
+        const glm::mat4 &projection,
+        Frustum &frustum) = 0;
+    virtual void renderTransparent(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &view,
+        const glm::mat4 &projection,
+        Frustum &frustum) = 0;
+    virtual void renderShadow(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &viewProj,
+        Frustum &frustum) = 0;
 };
 
 class RenderManager : public BaseUI
@@ -70,41 +86,6 @@ public:
 
     FragmentUniforms m_fragmentUniforms;
 
-    void renderUI() override;
-
-    void update(SDL_GPUSampleCount sampleCount);
-
-    // Management
-    void addRenderable(Renderable *renderable);
-
-    // Rendering
-    void renderShadows(SDL_GPUCommandBuffer *cmd, SDL_GPURenderPass *pass, const glm::mat4 &viewProj);
-    void renderScene(SDL_GPUCommandBuffer *cmd, SDL_GPURenderPass *pass,
-                     const glm::mat4 &view, const glm::mat4 &projection,
-                     const glm::vec3 &camPos);
-
-    SDL_GPUGraphicsPipeline *getPbrPipeline() const
-    {
-        return m_pbrPipeline;
-    }
-    SDL_GPUSampler *getBaseSampler() const
-    {
-        return m_baseSampler;
-    }
-    SDL_GPUTexture *getDefaultTexture() const
-    {
-        return m_defaultTexture;
-    }
-    PbrManager *getPbrManager()
-    {
-        return m_pbrManager;
-    }
-    ShadowManager *getShadowManager()
-    {
-        return m_shadowManager;
-    }
-
-private:
     SDL_GPUDevice *m_device;
     SDL_Window *m_window;
     ResourceManager *m_resourceManager;
@@ -115,10 +96,50 @@ private:
     SDL_GPUSampler *m_baseSampler;
     SDL_GPUTexture *m_defaultTexture;
 
+    SDL_GPUGraphicsPipeline *m_oitPipeline;
+    SDL_GPUGraphicsPipeline *m_compositePipeline;
+
+    SDL_GPUTexture *m_accumTexture = nullptr;
+    SDL_GPUTexture *m_revealTexture = nullptr;
+
+    glm::ivec2 m_screenSize;
+
     std::vector<Renderable *> m_renderables;
 
     SDL_GPUSampleCount m_sampleCount;
 
-    void createPipeline(SDL_GPUSampleCount sampleCount);
+    void renderUI() override;
+
+    void update(glm::ivec2 screenSize, SDL_GPUSampleCount sampleCount);
+
+    // Management
+    void addRenderable(Renderable *renderable);
+
+    // Resource
     void createDefaultResources();
+    void updateOitTextures(glm::ivec2 screenSize);
+
+    // Pipeline
+    void createPipeline(SDL_GPUSampleCount sampleCount);
+
+    // Rendering
+    void renderShadow(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &viewProj);
+    void renderOpaque(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &view,
+        const glm::mat4 &projection,
+        const glm::vec3 &camPos);
+    void renderTransparent(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &view,
+        const glm::mat4 &projection,
+        const glm::vec3 &camPos);
+    void renderComposite(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass);
 };
