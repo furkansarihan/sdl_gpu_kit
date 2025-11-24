@@ -48,7 +48,7 @@ cmake ../.. -G Ninja -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_TOOLCHAIN_FILE=conan
 cmake --build . --parallel 8
 
 if [ "$RUN_AFTER_BUILD" = true ]; then
-  ./app
+  ./dev
 fi
 
 popd

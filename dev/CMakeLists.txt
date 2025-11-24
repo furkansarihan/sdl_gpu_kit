@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.15)
-project(app)
+project(dev)
+
+# Define the path to the SDL_GPU_Kit directory
+set(SDL_GPU_Kit_DIR ${CMAKE_SOURCE_DIR}/..)
 
 # find libraries
 find_package(SDL3 REQUIRED)
@@ -9,16 +12,16 @@ find_package(imgui REQUIRED)
 # find_package(... REQUIRED)
 
 # Add all .cpp files in the src directory and its subdirectories
-file(GLOB_RECURSE CPP_SOURCES src/*.cpp)
+file(GLOB_RECURSE CPP_SOURCES ${SDL_GPU_Kit_DIR}/src/*.cpp src/*.cpp)
 
 # Add all .h files in the src directory and its subdirectories
-file(GLOB_RECURSE HEADER_FILES src/*.h)
+file(GLOB_RECURSE HEADER_FILES ${SDL_GPU_Kit_DIR}/src/*.h src/*.h)
 
-# Create the engine library target
+# Create the library target
 add_executable(${PROJECT_NAME} src/main.cpp ${CPP_SOURCES} ${HEADER_FILES})
 
 # Include headers
-target_include_directories(${PROJECT_NAME} PRIVATE ${ENIGINE_DIR}/src)
+target_include_directories(${PROJECT_NAME} PRIVATE ../src)
 
 # Link libraries
 target_link_libraries(${PROJECT_NAME} SDL3::SDL3)
@@ -27,19 +30,22 @@ target_link_libraries(${PROJECT_NAME} TinyGLTF::TinyGLTF)
 target_link_libraries(${PROJECT_NAME} imgui::imgui)
 # target_link_libraries(${PROJECT_NAME} ...)
 
-# Copy assets
+# Copy project assets
 file(COPY ${CMAKE_SOURCE_DIR}/assets DESTINATION ${CMAKE_BINARY_DIR}/)
 
-# Collect all shader files from src directory
+# Copy SDL_GPU_Kit assets
+file(COPY ${CMAKE_SOURCE_DIR}/../src/assets DESTINATION ${CMAKE_BINARY_DIR}/src/)
+
+# Collect all SDL_GPU_Kit shader files from src directory
 file(GLOB_RECURSE SHADER_SOURCES 
-    "${CMAKE_SOURCE_DIR}/src/*.vert"
-    "${CMAKE_SOURCE_DIR}/src/*.frag"
-    "${CMAKE_SOURCE_DIR}/src/*.comp"
+    ${SDL_GPU_Kit_DIR}/src/*.vert
+    ${SDL_GPU_Kit_DIR}/src/*.frag
+    ${SDL_GPU_Kit_DIR}/src/*.comp
 )
 
 function(compile_shader SOURCE_FILE)
     # Get relative path from src directory
-    file(RELATIVE_PATH REL_PATH "${CMAKE_SOURCE_DIR}/src" "${SOURCE_FILE}")
+    file(RELATIVE_PATH REL_PATH ${SDL_GPU_Kit_DIR}/src ${SOURCE_FILE})
     
     # Create output path maintaining directory structure
     set(OUTPUT ${CMAKE_BINARY_DIR}/src/${REL_PATH})

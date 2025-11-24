@@ -275,8 +275,8 @@ void PbrManager::init()
         // TODO:
         std::string exePath = Utils::getExecutablePath();
 
-        m_quadModel = m_resourceManager->loadModel(std::string(exePath + "/assets/models/quad.glb").c_str());
-        m_cubeModel = m_resourceManager->loadModel(std::string(exePath + "/assets/models/cube.glb").c_str());
+        m_quadModel = m_resourceManager->loadModel(std::string(exePath + "/src/assets/models/quad.glb").c_str());
+        m_cubeModel = m_resourceManager->loadModel(std::string(exePath + "/src/assets/models/cube.glb").c_str());
     }
 
     SDL_ReleaseGPUShader(Utils::device, quadVert);
