@@ -42,7 +42,7 @@ float interleavedGradientNoise(vec2 w) {
 }
 
 // tap count up can go up to 64
-const uint DPCF_SHADOW_TAP_COUNT                = 12u;
+// const uint DPCF_SHADOW_TAP_COUNT                = 12u;
 // more samples lead to better "shape" of the hardened shadow
 const uint PCSS_SHADOW_BLOCKER_SEARCH_TAP_COUNT = 16u;
 // less samples lead to noisier shadows (can be mitigated with TAA)
@@ -165,7 +165,9 @@ void blockerSearchAndFilter(out float occludedCount, out float z_occSum,
  * DPCF, PCF with contact hardenning simulation.
  * see "Shadow of Cold War", A scalable approach to shadowing -- by Kevin Myers
  */
-float ShadowSample_DPCF(const bool DIRECTIONAL,
+float ShadowSample_DPCF(
+        uint tapCount,
+        const bool DIRECTIONAL,
         const sampler2DArray map,
         const vec4 scissorNormalized,
         const uint layer, const int index,
@@ -187,7 +189,7 @@ float ShadowSample_DPCF(const bool DIRECTIONAL,
 
     blockerSearchAndFilter(occludedCount, z_occSum,
             map, scissorNormalized, position.xy, position.z, layer, texelSize * penumbra, R, dz_duv,
-            DPCF_SHADOW_TAP_COUNT);
+            tapCount);
 
     // early exit if there is no occluders at all, also avoids a divide-by-zero below.
     if (z_occSum == 0.0) {
@@ -205,7 +207,7 @@ float ShadowSample_DPCF(const bool DIRECTIONAL,
     penumbraRatio = saturate(penumbraRatio);
 
     // regular PCF weight (i.e. average of samples in shadow)
-    float percentageOccluded = occludedCount * (1.0 / float(DPCF_SHADOW_TAP_COUNT));
+    float percentageOccluded = occludedCount * (1.0 / float(tapCount));
 
     // now we just need to lerp between hardened PCF and regular PCF based on alpha
     percentageOccluded = mix(hardenedKernel(percentageOccluded), percentageOccluded, penumbraRatio);
@@ -245,7 +247,7 @@ int getCascadeIndex(vec3 worldPos) {
     return index;
 }
 
-float shadow(vec3 worldPos, vec3 normal, vec3 camPosition, vec3 lightDir) {
+float shadow(vec3 worldPos, vec3 normal, vec3 camPosition, vec3 lightDir, uint tapCount) {
     int index = getCascadeIndex(worldPos);
     float bias = shadowUBO.cascadeBias[index];
     mat4 DepthBiasVP = shadowUBO.depthBiasVP[index];
@@ -261,6 +263,7 @@ float shadow(vec3 worldPos, vec3 normal, vec3 camPosition, vec3 lightDir) {
     float shadow = 0.0;
 
     shadow = ShadowSample_DPCF(
+        tapCount,
         true,
         shadowMap,
         scissorNormalized,

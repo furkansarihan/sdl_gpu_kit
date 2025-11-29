@@ -32,7 +32,7 @@ public:
     ShadowManager();
     ~ShadowManager();
 
-    int m_shadowMapResolution = 2048;
+    int m_shadowMapResolution = 1024;
     float m_cascadeLambda = 0.5f;
 
     // GPU objects

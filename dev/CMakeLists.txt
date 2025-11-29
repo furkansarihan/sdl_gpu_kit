@@ -21,7 +21,7 @@ file(GLOB_RECURSE HEADER_FILES ${SDL_GPU_Kit_DIR}/src/*.h src/*.h)
 add_executable(${PROJECT_NAME} src/main.cpp ${CPP_SOURCES} ${HEADER_FILES})
 
 # Include headers
-target_include_directories(${PROJECT_NAME} PRIVATE ../src)
+target_include_directories(${PROJECT_NAME} PRIVATE ${SDL_GPU_Kit_DIR}/src)
 
 # Link libraries
 target_link_libraries(${PROJECT_NAME} SDL3::SDL3)
@@ -34,18 +34,30 @@ target_link_libraries(${PROJECT_NAME} imgui::imgui)
 file(COPY ${CMAKE_SOURCE_DIR}/assets DESTINATION ${CMAKE_BINARY_DIR}/)
 
 # Copy SDL_GPU_Kit assets
-file(COPY ${CMAKE_SOURCE_DIR}/../src/assets DESTINATION ${CMAKE_BINARY_DIR}/src/)
+file(COPY ${SDL_GPU_Kit_DIR}/src/assets DESTINATION ${CMAKE_BINARY_DIR}/src/)
 
 # Collect all SDL_GPU_Kit shader files from src directory
 file(GLOB_RECURSE SHADER_SOURCES 
     ${SDL_GPU_Kit_DIR}/src/*.vert
     ${SDL_GPU_Kit_DIR}/src/*.frag
     ${SDL_GPU_Kit_DIR}/src/*.comp
+    ${CMAKE_SOURCE_DIR}/src/*.vert
+    ${CMAKE_SOURCE_DIR}/src/*.frag
+    ${CMAKE_SOURCE_DIR}/src/*.comp
 )
 
 function(compile_shader SOURCE_FILE)
-    # Get relative path from src directory
-    file(RELATIVE_PATH REL_PATH ${SDL_GPU_Kit_DIR}/src ${SOURCE_FILE})
+
+    string(FIND "${SOURCE_FILE}" "${SDL_GPU_Kit_DIR}/src" IS_KIT_SHADER)
+    
+    if(IS_KIT_SHADER EQUAL 0)
+        set(SHADER_ROOT "${SDL_GPU_Kit_DIR}/src")
+    else()
+        set(SHADER_ROOT "${CMAKE_SOURCE_DIR}/src")
+    endif()
+
+    # Get relative path
+    file(RELATIVE_PATH REL_PATH "${SHADER_ROOT}" "${SOURCE_FILE}")
     
     # Create output path maintaining directory structure
     set(OUTPUT ${CMAKE_BINARY_DIR}/src/${REL_PATH})
@@ -60,7 +72,7 @@ function(compile_shader SOURCE_FILE)
     # Preprocessing stage using glslc with -E flag
     add_custom_command(
         OUTPUT ${PREPROCESSED_OUTPUT}
-        COMMAND glslc -E ${SOURCE_FILE} -o ${PREPROCESSED_OUTPUT} -I ${CMAKE_SOURCE_DIR}/src
+        COMMAND glslc -E ${SOURCE_FILE} -o ${PREPROCESSED_OUTPUT} -I ${CMAKE_SOURCE_DIR}/src -I ${SDL_GPU_Kit_DIR}/src/shaders/
         DEPENDS ${SOURCE_FILE}
     )
     

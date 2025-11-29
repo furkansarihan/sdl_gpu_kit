@@ -31,7 +31,8 @@
 #include "shadow_manager/shadow_manager.h"
 #include "update_manager/update_manager.h"
 
-DefaultRunner::DefaultRunner()
+DefaultRunner::DefaultRunner(glm::ivec2 windowSize)
+    : m_initWindowSize(windowSize)
 {
     // Initialize input arrays
     std::memset(m_keys, 0, sizeof(m_keys));
@@ -76,10 +77,8 @@ SDL_AppResult DefaultRunner::Init(int argc, char **argv)
     const SDL_GPUShaderFormat shaderFormat = SDL_GPU_SHADERFORMAT_SPIRV;
 #endif
 
-    glm::ivec2 screenSize{1280, 720};
-
     // Create window
-    m_window = SDL_CreateWindow("SDL_GPU_Kit", screenSize.x, screenSize.y, SDL_WINDOW_RESIZABLE);
+    m_window = SDL_CreateWindow("SDL_GPU_Kit", m_initWindowSize.x, m_initWindowSize.y, SDL_WINDOW_RESIZABLE);
     if (!m_window)
     {
         SDL_Log("Window creation failed: %s", SDL_GetError());
@@ -105,9 +104,9 @@ SDL_AppResult DefaultRunner::Init(int argc, char **argv)
     // Initialize Managers
     m_resourceManager = new ResourceManager(m_device);
     m_renderManager = new RenderManager(m_device, m_window, m_resourceManager, msaaSampleCount);
-    m_renderManager->updateResources(screenSize, msaaSampleCount);
+    m_renderManager->updateResources(m_initWindowSize, msaaSampleCount);
     m_postProcess = new PostProcess(msaaSampleCount);
-    m_postProcess->update(screenSize);
+    m_postProcess->update(m_initWindowSize);
     m_updateManager = new UpdateManager();
 
     // Setup ImGui

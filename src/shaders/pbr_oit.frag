@@ -135,63 +135,13 @@ void main()
         N = normalize(fragNormal);
     }
 
-    vec3 V = normalize(ubo.viewPos - fragPos);
-
-    // Calculate reflectance at normal incidence
-    vec3 F0 = vec3(0.04);
-    F0 = mix(F0, albedo, metallic);
-
-    // --- Direct Lighting ---
-    vec3 Lo = vec3(0.0);
+    // TODO: 
     vec3 L = normalize(-ubo.lightDir);
     float NdotL = max(dot(N, L), 0.0);
 
-    if (NdotL > 0.0)
-    {
-        vec3 H = normalize(V + L);
-        vec3 radiance = ubo.lightColor;
-
-        // Cook-Torrance BRDF
-        float NDF = DistributionGGX(N, H, roughness);
-        float G = GeometrySmith(N, V, L, roughness);
-        vec3 F = fresnelSchlick(clamp(dot(H, V), 0.0, 1.0), F0);
-
-        vec3 numerator = NDF * G * F;
-        float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
-        vec3 specular = numerator / denominator;
-
-        vec3 kS = F;
-        vec3 kD = vec3(1.0) - kS;
-        kD *= 1.0 - metallic;
-
-        Lo += (kD * albedo / PI + specular) * radiance * NdotL;
-    }
-
-    // --- Image-Based Lighting (IBL) ---
-
-    // Diffuse IBL
-    vec3 irradiance = texture(irradianceMap, N).rgb;
-    vec3 diffuse = irradiance * albedo;
-
-    // Specular IBL
-    vec3 R = reflect(-V, N);
-    vec3 F = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness);
-
-    vec3 kS = F;
-    vec3 kD = 1.0 - kS;
-    kD *= 1.0 - metallic;
-
-    float maxLod = float(textureQueryLevels(prefilterMap) - 1);
-    float lod = roughness * maxLod;
-    vec3 prefilteredColor = textureLod(prefilterMap, R, lod).rgb;
-    vec2 envBRDF = texture(brdfLUT, vec2(max(dot(N, V), 0.0), roughness)).rg;
-    vec3 specular = prefilteredColor * (F * envBRDF.x + envBRDF.y);
-
-    vec3 ambient = (kD * diffuse + specular) * ao;
-
     float visibility = 1.0;
     if (NdotL > 0.0) {
-        visibility = shadow(fragPos, fragNormal, ubo.viewPos, ubo.lightDir);
+        visibility = shadow(fragPos, fragNormal, ubo.viewPos, ubo.lightDir, 2u);
     }
 
     // debug cascade
@@ -208,8 +158,16 @@ void main()
         }
     } */
 
+    
+    ShadeResult shade = shadePBR(
+        fragPos,
+        ubo.viewPos,
+        ubo.lightDir,
+        ubo.lightColor,
+        albedo, metallic, roughness, N, ao);
+
     // --- Final Color ---
-    vec3 color = ambient + Lo * visibility;
+    vec3 color = shade.ambient + shade.Lo * visibility;
 
     // Weight function by McGuire and Bavoil
     // Adjust depth range as needed (assuming 0.0 - 1.0 depth)

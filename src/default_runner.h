@@ -17,7 +17,7 @@ struct UpdateManager;
 class DefaultRunner
 {
 public:
-    DefaultRunner();
+    DefaultRunner(glm::ivec2 windowSize);
     ~DefaultRunner();
 
     // Core SDL resources
@@ -33,6 +33,7 @@ public:
     Uint64 m_lastFrame = 0;
 
     // Viewport
+    glm::ivec2 m_initWindowSize;
     Uint32 m_width, m_height;
 
     // Sub-systems

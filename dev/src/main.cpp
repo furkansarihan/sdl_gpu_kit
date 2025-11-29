@@ -16,7 +16,7 @@ Texture g_hdrTexture;
 
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 {
-    DefaultRunner *runner = new DefaultRunner();
+    DefaultRunner *runner = new DefaultRunner({1280, 720});
     *appstate = runner;
     SDL_AppResult result = runner->Init(argc, argv);
 

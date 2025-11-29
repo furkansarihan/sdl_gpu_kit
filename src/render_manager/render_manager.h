@@ -60,18 +60,18 @@ public:
         SDL_GPURenderPass *pass,
         const glm::mat4 &view,
         const glm::mat4 &projection,
-        const Frustum &frustum) = 0;
+        const Frustum &frustum) {};
     virtual void renderTransparent(
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,
         const glm::mat4 &view,
         const glm::mat4 &projection,
-        const Frustum &frustum) = 0;
+        const Frustum &frustum) {};
     virtual void renderShadow(
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,
         const glm::mat4 &viewProj,
-        const Frustum &frustum) = 0;
+        const Frustum &frustum) {};
 };
 
 class RenderManager : public BaseUI

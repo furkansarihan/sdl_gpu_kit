@@ -133,7 +133,8 @@ public:
         const char *filepath,
         Uint32 numSamplers,
         Uint32 numUniformBuffers,
-        SDL_GPUShaderStage stage)
+        SDL_GPUShaderStage stage,
+        Uint32 numStorageBuffers = 0)
     {
 #if defined(__APPLE__)
         const SDL_GPUShaderFormat shaderFormat = SDL_GPU_SHADERFORMAT_METALLIB;
@@ -162,7 +163,7 @@ public:
         shaderInfo.stage = stage;
         shaderInfo.num_samplers = numSamplers;
         shaderInfo.num_storage_textures = 0;
-        shaderInfo.num_storage_buffers = 0;
+        shaderInfo.num_storage_buffers = numStorageBuffers;
         shaderInfo.num_uniform_buffers = numUniformBuffers;
 
         SDL_GPUShader *shader = SDL_CreateGPUShader(device, &shaderInfo);
