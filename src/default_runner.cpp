@@ -29,6 +29,7 @@
 #include "resource_manager/renderable_model.h"
 #include "resource_manager/resource_manager.h"
 #include "shadow_manager/shadow_manager.h"
+#include "update_manager/update_manager.h"
 
 DefaultRunner::DefaultRunner()
 {
@@ -104,9 +105,10 @@ SDL_AppResult DefaultRunner::Init(int argc, char **argv)
     // Initialize Managers
     m_resourceManager = new ResourceManager(m_device);
     m_renderManager = new RenderManager(m_device, m_window, m_resourceManager, msaaSampleCount);
-    m_renderManager->update(screenSize, msaaSampleCount);
+    m_renderManager->updateResources(screenSize, msaaSampleCount);
     m_postProcess = new PostProcess(msaaSampleCount);
     m_postProcess->update(screenSize);
+    m_updateManager = new UpdateManager();
 
     // Setup ImGui
     IMGUI_CHECKVERSION();
@@ -146,12 +148,14 @@ SDL_AppResult DefaultRunner::Iterate()
     m_lastFrame = currentFrame;
 
     UpdateCamera(m_deltaTime);
+    m_camera.view = glm::lookAt(m_camera.position, m_camera.position + m_camera.front, m_camera.up);
+    m_camera.projection = glm::perspective(glm::radians(m_camera.fov), (float)m_width / (float)m_height, m_camera.near, m_camera.far);
+    m_updateManager->update(m_deltaTime);
 
     SDL_GPUCommandBuffer *commandBuffer = SDL_AcquireGPUCommandBuffer(m_device);
 
     SDL_GPUTexture *swapchainTexture;
-    Uint32 width, height;
-    SDL_WaitAndAcquireGPUSwapchainTexture(commandBuffer, m_window, &swapchainTexture, &width, &height);
+    SDL_WaitAndAcquireGPUSwapchainTexture(commandBuffer, m_window, &swapchainTexture, &m_width, &m_height);
 
     if (swapchainTexture == NULL)
     {
@@ -159,16 +163,16 @@ SDL_AppResult DefaultRunner::Iterate()
         return SDL_APP_CONTINUE;
     }
 
-    m_postProcess->update({width, height});
-    m_renderManager->update({width, height}, m_postProcess->m_sampleCount);
+    m_postProcess->update({m_width, m_height});
+    m_renderManager->updateResources({m_width, m_height}, m_postProcess->m_sampleCount);
 
     // Camera Matrices
-    glm::mat4 view = glm::lookAt(m_camera.position, m_camera.position + m_camera.front, m_camera.up);
-    glm::mat4 projection = glm::perspective(glm::radians(m_camera.fov), (float)width / (float)height, m_camera.near, m_camera.far);
+    const glm::mat4 &view = m_camera.view;
+    const glm::mat4 &projection = m_camera.projection;
     m_renderManager->m_fragmentUniforms.viewPos = m_camera.position;
 
     // --- Shadow Pass ---
-    float aspect = static_cast<float>(width) / static_cast<float>(height);
+    float aspect = static_cast<float>(m_width) / static_cast<float>(m_height);
     m_renderManager->m_shadowManager->updateCascades(&m_camera, view, -m_renderManager->m_fragmentUniforms.lightDir, aspect);
 
     ShadowManager *shadowManager = m_renderManager->m_shadowManager;
@@ -324,13 +328,18 @@ SDL_AppResult DefaultRunner::ProcessEvent(SDL_Event *event)
 
 void DefaultRunner::Quit()
 {
-    delete m_rootUI;
-    delete m_systemMonitorUI;
-    delete m_postProcess;
-    delete m_renderManager;
-
+    if (m_rootUI)
+        delete m_rootUI;
+    if (m_systemMonitorUI)
+        delete m_systemMonitorUI;
     if (m_resourceManager)
         delete m_resourceManager;
+    if (m_renderManager)
+        delete m_renderManager;
+    if (m_postProcess)
+        delete m_postProcess;
+    if (m_updateManager)
+        delete m_updateManager;
 
     if (m_device)
         SDL_DestroyGPUDevice(m_device);

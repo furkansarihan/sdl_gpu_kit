@@ -40,7 +40,7 @@ public:
         return f;
     }
 
-    bool containsSphere(const glm::vec3 &center, float radius)
+    bool intersectsSphere(const glm::vec3 &center, float radius) const
     {
         for (int i = 0; i < 6; ++i)
         {
@@ -51,5 +51,31 @@ public:
         }
 
         return true; // at least partially inside
+    }
+
+    bool intersectsAABB(const glm::vec3 &bmin, const glm::vec3 &bmax) const
+    {
+        // For each plane, test the box's vertex that is furthest *towards* the plane normal.
+        // If even that vertex is outside (distance < 0), the whole box is outside.
+        for (int i = 0; i < 6; ++i)
+        {
+            const glm::vec4 &p = planes[i];
+            glm::vec3 n = glm::vec3(p); // plane normal (xyz)
+
+            glm::vec3 v; // vertex most in direction of normal
+            v.x = (n.x >= 0.0f) ? bmax.x : bmin.x;
+            v.y = (n.y >= 0.0f) ? bmax.y : bmin.y;
+            v.z = (n.z >= 0.0f) ? bmax.z : bmin.z;
+
+            float dist = glm::dot(n, v) + p.w;
+
+            // If the most "inside" vertex for this plane is still outside,
+            // then the entire AABB is outside this plane.
+            if (dist < 0.0f)
+                return false;
+        }
+
+        // Not culled by any plane → box intersects or is inside the frustum
+        return true;
     }
 };

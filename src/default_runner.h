@@ -10,6 +10,7 @@ class RenderManager;
 class PostProcess;
 struct RenderableModel;
 struct Texture;
+struct UpdateManager;
 
 #include "camera.h"
 
@@ -31,6 +32,9 @@ public:
     float m_deltaTime = 0.0f;
     Uint64 m_lastFrame = 0;
 
+    // Viewport
+    Uint32 m_width, m_height;
+
     // Sub-systems
     Camera m_camera;
     RootUI *m_rootUI = nullptr;
@@ -38,6 +42,7 @@ public:
     ResourceManager *m_resourceManager = nullptr;
     RenderManager *m_renderManager = nullptr;
     PostProcess *m_postProcess = nullptr;
+    UpdateManager *m_updateManager = nullptr;
 
     void UpdateCamera(float dt);
 

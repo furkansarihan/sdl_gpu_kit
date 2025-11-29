@@ -83,7 +83,7 @@ void RenderManager::renderUI()
     ImGui::PopID();
 }
 
-void RenderManager::update(glm::ivec2 screenSize, SDL_GPUSampleCount sampleCount)
+void RenderManager::updateResources(glm::ivec2 screenSize, SDL_GPUSampleCount sampleCount)
 {
     if (sampleCount != m_sampleCount)
     {

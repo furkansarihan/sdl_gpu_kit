@@ -9,12 +9,12 @@ float ExtractMaxScale(const glm::mat4 &m)
     return std::max(sx, std::max(sy, sz));
 }
 
-bool PrimitiveInFrustum(const PrimitiveData &prim, const glm::mat4 &worldTransform, Frustum &frustum)
+bool PrimitiveInFrustum(const PrimitiveData &prim, const glm::mat4 &worldTransform, const Frustum &frustum)
 {
     glm::vec3 worldCenter = glm::vec3(worldTransform * glm::vec4(prim.sphereCenter, 1.0f));
     float maxScale = ExtractMaxScale(worldTransform);
     float worldRadius = prim.sphereRadius * maxScale;
-    return frustum.containsSphere(worldCenter, worldRadius);
+    return frustum.intersectsSphere(worldCenter, worldRadius);
 }
 
 void RenderableModel::renderModel(
@@ -23,7 +23,7 @@ void RenderableModel::renderModel(
     SDL_GPURenderPass *pass,
     const glm::mat4 &view,
     const glm::mat4 &projection,
-    Frustum &frustum)
+    const Frustum &frustum)
 {
     // Material fallback
     Material defaultMaterial("default");
@@ -102,7 +102,7 @@ void RenderableModel::renderOpaque(
     SDL_GPURenderPass *pass,
     const glm::mat4 &view,
     const glm::mat4 &projection,
-    Frustum &frustum)
+    const Frustum &frustum)
 {
     renderModel(false, cmd, pass, view, projection, frustum);
 }
@@ -112,7 +112,7 @@ void RenderableModel::renderTransparent(
     SDL_GPURenderPass *pass,
     const glm::mat4 &view,
     const glm::mat4 &projection,
-    Frustum &frustum)
+    const Frustum &frustum)
 {
     renderModel(true, cmd, pass, view, projection, frustum);
 }
@@ -121,7 +121,7 @@ void RenderableModel::renderShadow(
     SDL_GPUCommandBuffer *cmd,
     SDL_GPURenderPass *pass,
     const glm::mat4 &viewProj,
-    Frustum &frustum)
+    const Frustum &frustum)
 {
     ShadowVertexUniforms shadowUniforms{};
     shadowUniforms.lightViewProj = viewProj;

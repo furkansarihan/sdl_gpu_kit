@@ -60,18 +60,18 @@ public:
         SDL_GPURenderPass *pass,
         const glm::mat4 &view,
         const glm::mat4 &projection,
-        Frustum &frustum) = 0;
+        const Frustum &frustum) = 0;
     virtual void renderTransparent(
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,
         const glm::mat4 &view,
         const glm::mat4 &projection,
-        Frustum &frustum) = 0;
+        const Frustum &frustum) = 0;
     virtual void renderShadow(
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,
         const glm::mat4 &viewProj,
-        Frustum &frustum) = 0;
+        const Frustum &frustum) = 0;
 };
 
 class RenderManager : public BaseUI
@@ -110,7 +110,7 @@ public:
 
     void renderUI() override;
 
-    void update(glm::ivec2 screenSize, SDL_GPUSampleCount sampleCount);
+    void updateResources(glm::ivec2 screenSize, SDL_GPUSampleCount sampleCount);
 
     // Management
     void addRenderable(Renderable *renderable);

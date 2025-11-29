@@ -2,8 +2,9 @@
 
 #include <glm/glm.hpp>
 
-struct Camera
+class Camera
 {
+public:
     glm::vec3 position = glm::vec3(0.0f, 0.3f, 3.0f);
     glm::vec3 front = glm::vec3(0.0f, 0.0f, -1.0f);
     glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
@@ -17,4 +18,6 @@ struct Camera
     float lastX = 640.0f;
     float lastY = 360.0f;
     bool firstMouse = true;
+    glm::mat4 view;
+    glm::mat4 projection;
 };

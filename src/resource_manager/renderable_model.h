@@ -25,25 +25,25 @@ public:
         SDL_GPURenderPass *pass,
         const glm::mat4 &view,
         const glm::mat4 &projection,
-        Frustum &frustum);
+        const Frustum &frustum);
 
     void renderOpaque(
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,
         const glm::mat4 &view,
         const glm::mat4 &projection,
-        Frustum &frustum) override;
+        const Frustum &frustum) override;
     void renderTransparent(
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,
         const glm::mat4 &view,
         const glm::mat4 &projection,
-        Frustum &frustum) override;
+        const Frustum &frustum) override;
     void renderShadow(
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,
         const glm::mat4 &viewProj,
-        Frustum &frustum) override;
+        const Frustum &frustum) override;
 
 private:
     void bindTextures(SDL_GPURenderPass *pass, Material *mat);
