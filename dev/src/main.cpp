@@ -74,7 +74,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
     for (RenderableModel *obj : g_renderableModels)
     {
         if (resourceManager)
-            resourceManager->dispose(obj->model);
+            resourceManager->dispose(obj->m_model);
         delete obj;
     }
     g_renderableModels.clear();

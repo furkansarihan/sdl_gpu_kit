@@ -10,17 +10,21 @@ struct ShadowVertexUniforms
 class RenderableModel : public Renderable
 {
 public:
-    ModelData *model;
-    RenderManager *manager;
+    ModelData *m_model;
+    RenderManager *m_manager;
+    bool m_castingShadow;
 
     RenderableModel(ModelData *m, RenderManager *rm)
-        : model(m),
-          manager(rm)
+        : m_model(m),
+          m_manager(rm),
+          m_castingShadow(true)
     {
     }
 
     void renderModel(
         bool blend,
+        bool checkDoubleSide,
+        bool doubleSide,
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,
         const glm::mat4 &view,
@@ -28,6 +32,12 @@ public:
         const Frustum &frustum);
 
     void renderOpaque(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &view,
+        const glm::mat4 &projection,
+        const Frustum &frustum) override;
+    void renderOpaqueDoubleSided(
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,
         const glm::mat4 &view,

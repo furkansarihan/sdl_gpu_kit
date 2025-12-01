@@ -38,6 +38,9 @@ layout(binding = 1) uniform MaterialUniformBlock {
     int hasEmissiveTexture;
     int hasOpacityTexture;
     vec2 uvScale;
+
+    bool doubleSided;
+    vec3 padding;
 } material;
 
 const int MAX_CASCADES = 4;
@@ -138,6 +141,10 @@ void main()
         N = getNormalFromMap(uv, fragTangent, fragBitangent, fragNormal);
     } else {
         N = fragNormal;
+    }
+
+    if (material.doubleSided && !gl_FrontFacing) {
+        N = -N;
     }
 
     // TODO: 

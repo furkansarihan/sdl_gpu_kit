@@ -38,6 +38,8 @@ RenderManager::~RenderManager()
 
     if (m_pbrPipeline)
         SDL_ReleaseGPUGraphicsPipeline(m_device, m_pbrPipeline);
+    if (m_pbrDoubleSided)
+        SDL_ReleaseGPUGraphicsPipeline(m_device, m_pbrDoubleSided);
     if (m_baseSampler)
         SDL_ReleaseGPUSampler(m_device, m_baseSampler);
     if (m_defaultTexture)
@@ -88,6 +90,7 @@ void RenderManager::updateResources(glm::ivec2 screenSize, SDL_GPUSampleCount sa
     if (sampleCount != m_sampleCount)
     {
         SDL_ReleaseGPUGraphicsPipeline(m_device, m_pbrPipeline);
+        SDL_ReleaseGPUGraphicsPipeline(m_device, m_pbrDoubleSided);
         createPipeline(sampleCount);
     }
 
@@ -227,10 +230,21 @@ void RenderManager::createPipeline(SDL_GPUSampleCount sampleCount)
     pipelineInfo.depth_stencil_state.enable_depth_test = true;
     pipelineInfo.depth_stencil_state.enable_depth_write = true; // Write Depth
 
+    pipelineInfo.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_BACK;
+
     m_pbrPipeline = SDL_CreateGPUGraphicsPipeline(m_device, &pipelineInfo);
     if (m_pbrPipeline == nullptr)
     {
         SDL_Log("Failed to create m_pbrPipeline: %s", SDL_GetError());
+        return;
+    }
+
+    pipelineInfo.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+
+    m_pbrDoubleSided = SDL_CreateGPUGraphicsPipeline(m_device, &pipelineInfo);
+    if (m_pbrDoubleSided == nullptr)
+    {
+        SDL_Log("Failed to create m_pbrDoubleSided: %s", SDL_GetError());
         return;
     }
 
@@ -282,6 +296,8 @@ void RenderManager::createPipeline(SDL_GPUSampleCount sampleCount)
     pipelineInfo.depth_stencil_state.enable_depth_write = false;
     pipelineInfo.depth_stencil_state.enable_depth_test = true;
     pipelineInfo.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS;
+
+    pipelineInfo.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
 
     m_oitPipeline = SDL_CreateGPUGraphicsPipeline(m_device, &pipelineInfo);
     if (m_oitPipeline == nullptr)
@@ -347,26 +363,25 @@ void RenderManager::renderOpaque(
     const glm::mat4 &projection,
     const glm::vec3 &camPos)
 {
-    // 1. Bind Pipeline
     SDL_BindGPUGraphicsPipeline(pass, m_pbrPipeline);
 
-    // 2. Push Global Uniforms
-    VertexUniforms vUniforms{};
-    vUniforms.view = view;
-    vUniforms.projection = projection;
-
-    // VS Binding 0: View/Proj
-    SDL_PushGPUVertexUniformData(cmd, 0, &vUniforms, sizeof(vUniforms));
-    // FS Binding 0: Light info, ViewPos
     SDL_PushGPUFragmentUniformData(cmd, 0, &m_fragmentUniforms, sizeof(FragmentUniforms));
-    // FS Binding 2: Shadow uniforms
     SDL_PushGPUFragmentUniformData(cmd, 2, &m_shadowManager->m_shadowUniforms, sizeof(ShadowUniforms));
 
-    // 3. Render Objects
     Frustum frustum = Frustum::fromMatrix(projection * view);
 
     for (Renderable *r : m_renderables)
         r->renderOpaque(cmd, pass, view, projection, frustum);
+
+    // ---
+
+    SDL_BindGPUGraphicsPipeline(pass, m_pbrDoubleSided);
+
+    SDL_PushGPUFragmentUniformData(cmd, 0, &m_fragmentUniforms, sizeof(FragmentUniforms));
+    SDL_PushGPUFragmentUniformData(cmd, 2, &m_shadowManager->m_shadowUniforms, sizeof(ShadowUniforms));
+
+    for (Renderable *r : m_renderables)
+        r->renderOpaqueDoubleSided(cmd, pass, view, projection, frustum);
 }
 
 void RenderManager::renderTransparent(

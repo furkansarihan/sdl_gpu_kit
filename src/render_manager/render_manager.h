@@ -48,6 +48,9 @@ struct MaterialUniforms
     int hasEmissiveTexture;
     int hasOpacityTexture;
     glm::vec2 uvScale;
+
+    bool doubleSided;
+    glm::vec3 padding;
 };
 
 class Renderable
@@ -56,6 +59,12 @@ public:
     virtual ~Renderable() = default;
 
     virtual void renderOpaque(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &view,
+        const glm::mat4 &projection,
+        const Frustum &frustum) {};
+    virtual void renderOpaqueDoubleSided(
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,
         const glm::mat4 &view,
@@ -93,6 +102,7 @@ public:
     ShadowManager *m_shadowManager;
 
     SDL_GPUGraphicsPipeline *m_pbrPipeline;
+    SDL_GPUGraphicsPipeline *m_pbrDoubleSided;
     SDL_GPUSampler *m_baseSampler;
     SDL_GPUTexture *m_defaultTexture;
 

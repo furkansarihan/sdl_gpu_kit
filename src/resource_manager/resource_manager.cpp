@@ -343,6 +343,8 @@ ModelData *ResourceManager::loadModel(const std::string &path)
         else
             mat->alphaMode = AlphaMode::Opaque;
 
+        mat->doubleSided = gltfMat.doubleSided;
+
         const auto &pbr = gltfMat.pbrMetallicRoughness;
         if (pbr.baseColorFactor.size() == 4)
             mat->albedo = glm::make_vec4(pbr.baseColorFactor.data());

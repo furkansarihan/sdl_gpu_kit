@@ -19,6 +19,8 @@ bool PrimitiveInFrustum(const PrimitiveData &prim, const glm::mat4 &worldTransfo
 
 void RenderableModel::renderModel(
     bool blend,
+    bool checkDoubleSide,
+    bool doubleSide,
     SDL_GPUCommandBuffer *cmd,
     SDL_GPURenderPass *pass,
     const glm::mat4 &view,
@@ -32,12 +34,12 @@ void RenderableModel::renderModel(
     vUniforms.view = view;
     vUniforms.projection = projection;
 
-    for (const auto &node : model->nodes)
+    for (const auto &node : m_model->nodes)
     {
-        if (node.meshIndex < 0 || node.meshIndex >= model->meshes.size())
+        if (node.meshIndex < 0 || node.meshIndex >= m_model->meshes.size())
             continue;
 
-        const MeshData &mesh = model->meshes[node.meshIndex];
+        const MeshData &mesh = m_model->meshes[node.meshIndex];
         const glm::mat4 &world = node.worldTransform;
 
         for (const auto &prim : mesh.primitives)
@@ -51,6 +53,9 @@ void RenderableModel::renderModel(
                 continue;
 
             if (!PrimitiveInFrustum(prim, world, frustum))
+                continue;
+
+            if (checkDoubleSide && mat->doubleSided != doubleSide)
                 continue;
 
             // Update Model Matrix
@@ -67,6 +72,7 @@ void RenderableModel::renderModel(
             matUniforms.occlusionStrength = 1.0f;
             matUniforms.alphaCutoff = mat->alphaCutoff;
             matUniforms.uvScale = mat->uvScale;
+            matUniforms.doubleSided = mat->doubleSided;
             matUniforms.hasAlbedoTexture = (mat->albedoTexture.id != nullptr);
             matUniforms.hasNormalTexture = (mat->normalTexture.id != nullptr);
             matUniforms.hasMetallicRoughnessTexture = (mat->metallicRoughnessTexture.id != nullptr);
@@ -104,7 +110,17 @@ void RenderableModel::renderOpaque(
     const glm::mat4 &projection,
     const Frustum &frustum)
 {
-    renderModel(false, cmd, pass, view, projection, frustum);
+    renderModel(false, true, false, cmd, pass, view, projection, frustum);
+}
+
+void RenderableModel::renderOpaqueDoubleSided(
+    SDL_GPUCommandBuffer *cmd,
+    SDL_GPURenderPass *pass,
+    const glm::mat4 &view,
+    const glm::mat4 &projection,
+    const Frustum &frustum)
+{
+    renderModel(false, true, true, cmd, pass, view, projection, frustum);
 }
 
 void RenderableModel::renderTransparent(
@@ -114,7 +130,7 @@ void RenderableModel::renderTransparent(
     const glm::mat4 &projection,
     const Frustum &frustum)
 {
-    renderModel(true, cmd, pass, view, projection, frustum);
+    renderModel(true, false, true, cmd, pass, view, projection, frustum);
 }
 
 void RenderableModel::renderShadow(
@@ -123,14 +139,17 @@ void RenderableModel::renderShadow(
     const glm::mat4 &viewProj,
     const Frustum &frustum)
 {
+    if (!m_castingShadow)
+        return;
+
     ShadowVertexUniforms shadowUniforms{};
     shadowUniforms.lightViewProj = viewProj;
 
-    for (const auto &node : model->nodes)
+    for (const auto &node : m_model->nodes)
     {
         if (node.meshIndex < 0)
             continue;
-        const MeshData &mesh = model->meshes[node.meshIndex];
+        const MeshData &mesh = m_model->meshes[node.meshIndex];
         const glm::mat4 &world = node.worldTransform;
 
         for (const auto &prim : mesh.primitives)
@@ -161,8 +180,8 @@ void RenderableModel::renderShadow(
 void RenderableModel::bindTextures(SDL_GPURenderPass *pass, Material *mat)
 {
     SDL_GPUTextureSamplerBinding bindings[10];
-    SDL_GPUTexture *def = manager->m_defaultTexture;
-    SDL_GPUSampler *samp = manager->m_baseSampler;
+    SDL_GPUTexture *def = m_manager->m_defaultTexture;
+    SDL_GPUSampler *samp = m_manager->m_baseSampler;
 
     bindings[0] = {mat->albedoTexture.id ? mat->albedoTexture.id : def, samp};
     bindings[1] = {mat->normalTexture.id ? mat->normalTexture.id : def, samp};
@@ -172,13 +191,13 @@ void RenderableModel::bindTextures(SDL_GPURenderPass *pass, Material *mat)
     bindings[5] = {mat->opacityTexture.id ? mat->opacityTexture.id : def, samp};
 
     // PBR Global textures (Irradiance, etc) retrieved from Manager
-    PbrManager *pbr = manager->m_pbrManager;
+    PbrManager *pbr = m_manager->m_pbrManager;
     bindings[6] = {pbr->m_irradianceTexture, pbr->m_cubeSampler};
     bindings[7] = {pbr->m_prefilterTexture, pbr->m_cubeSampler};
     bindings[8] = {pbr->m_brdfTexture, pbr->m_brdfSampler};
 
     // Shadowmap
-    bindings[9] = {manager->m_shadowManager->m_shadowMapTexture, manager->m_shadowManager->m_shadowSampler};
+    bindings[9] = {m_manager->m_shadowManager->m_shadowMapTexture, m_manager->m_shadowManager->m_shadowSampler};
 
     SDL_BindGPUFragmentSamplers(pass, 0, bindings, 10);
 }

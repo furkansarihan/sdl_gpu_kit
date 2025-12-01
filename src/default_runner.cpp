@@ -37,6 +37,9 @@ DefaultRunner::DefaultRunner(glm::ivec2 windowSize)
     // Initialize input arrays
     std::memset(m_keys, 0, sizeof(m_keys));
     std::memset(m_mouseButtons, 0, sizeof(m_mouseButtons));
+
+    m_width = windowSize.x;
+    m_height = windowSize.y;
 }
 
 DefaultRunner::~DefaultRunner()

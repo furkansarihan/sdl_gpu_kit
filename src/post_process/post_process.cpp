@@ -296,7 +296,7 @@ void PostProcess::update(glm::ivec2 screenSize)
         if (m_msaaDepthTexture)
             SDL_ReleaseGPUTexture(Utils::device, m_msaaDepthTexture);
 
-        // -MSAA Color Target
+        // MSAA Color Target
         SDL_GPUTextureCreateInfo msaaColorInfo{};
         msaaColorInfo.format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
         msaaColorInfo.width = screenSize.x;
@@ -314,7 +314,7 @@ void PostProcess::update(glm::ivec2 screenSize)
         msaaDepthInfo.height = screenSize.y;
         msaaDepthInfo.num_levels = 1;
         msaaDepthInfo.type = SDL_GPU_TEXTURETYPE_2D;
-        msaaDepthInfo.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET; // Not sampled directly
+        msaaDepthInfo.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
         msaaDepthInfo.sample_count = m_sampleCount;
         m_msaaDepthTexture = SDL_CreateGPUTexture(Utils::device, &msaaDepthInfo);
 
