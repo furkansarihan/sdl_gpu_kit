@@ -102,7 +102,7 @@ SDL_AppResult DefaultRunner::Init(int argc, char **argv)
     Utils::device = m_device;
     Utils::window = m_window;
 
-    SDL_GPUSampleCount msaaSampleCount = Utils::getHighestSupportedMSAA();
+    SDL_GPUSampleCount msaaSampleCount = Utils::getClosestSupportedMSAA(SDL_GPU_SAMPLECOUNT_2);
 
     // Initialize Managers
     m_resourceManager = new ResourceManager(m_device);
@@ -273,6 +273,7 @@ SDL_AppResult DefaultRunner::Iterate()
     m_postProcess->computeGTAO(commandBuffer, projection, view, m_camera.near, m_camera.far);
     m_postProcess->downsample(commandBuffer);
     m_postProcess->upsample(commandBuffer);
+    m_postProcess->runSMAA(commandBuffer);
     m_postProcess->postProcess(commandBuffer, swapchainTexture);
 
     // UI

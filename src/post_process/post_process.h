@@ -12,7 +12,8 @@ struct PostProcessFragmentUBO
     float exposure;
     float gamma;
     float bloomIntensity;
-    float padding[3];
+    Uint32 fxaaEnabled;
+    float padding[2];
 };
 
 struct BloomDownsampleUBO
@@ -54,6 +55,26 @@ struct GTAOParamsUBO
     float padding2;
 };
 
+enum AntiAliasingMode
+{
+    AA_None = 0,
+    AA_FXAA = 1,
+    AA_SMAA = 2,
+};
+
+enum SMAAEdgeDetectionMode
+{
+    SMAA_EDGE_COLOR = 0,
+    SMAA_EDGE_LUMA = 1
+};
+
+struct SMAAUniforms
+{
+    glm::vec4 rtMetrics; // (1/width, 1/height, width, height)
+    int edgeDetectionMode;
+    glm::vec3 padding;
+};
+
 class PostProcess : public BaseUI
 {
 public:
@@ -67,6 +88,9 @@ public:
     float m_gtaoPower;
 
     SDL_GPUSampleCount m_sampleCount;
+
+    SMAAUniforms m_smaaUniforms;
+    AntiAliasingMode m_aaMode;
 
     SDL_GPUSampler *m_clampedSampler = nullptr;
     SDL_GPUTexture *m_msaaColorTexture = nullptr;
@@ -96,7 +120,25 @@ public:
     SDL_GPUShader *m_gtaoGenFrag = nullptr;
     SDL_GPUShader *m_gtaoBlurFrag = nullptr;
 
+    // SMAA textures
+    SDL_GPUTexture *m_smaaEdgeTex = nullptr;  // RGBA8
+    SDL_GPUTexture *m_smaaBlendTex = nullptr; // RGBA8
+    SDL_GPUTexture *m_smaaColorTex = nullptr; // AA’d color (same format as m_colorTexture)
+
+    // SMAA LUTs
+    SDL_GPUTexture *m_smaaAreaTex = nullptr;
+    SDL_GPUTexture *m_smaaSearchTex = nullptr;
+    SDL_GPUSampler *m_smaaLutSampler = nullptr;
+
+    // SMAA pipelines
+    SDL_GPUGraphicsPipeline *m_smaaEdgePipeline = nullptr;
+    SDL_GPUGraphicsPipeline *m_smaaBlendPipeline = nullptr;
+    SDL_GPUGraphicsPipeline *m_smaaNeighborPipeline = nullptr;
+
     void renderUI() override;
+
+    void setAntiAliasingMode(AntiAliasingMode mode);
+
     void update(glm::ivec2 screenSize);
     void downsample(SDL_GPUCommandBuffer *commandBuffer);
     void upsample(SDL_GPUCommandBuffer *commandBuffer);
@@ -107,5 +149,9 @@ public:
         const glm::mat4 &viewMatrix,
         float nearPlane,
         float farPlane);
+    void runSMAA(SDL_GPUCommandBuffer *cmd);
     void postProcess(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTexture *swapchainTexture);
+
+    void loadSmaaLuts();
+    void loadSmaaTextureFromDDS(SDL_GPUTexture **textureOut, const char *filepath, SDL_GPUTextureFormat format);
 };

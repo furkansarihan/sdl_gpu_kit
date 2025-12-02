@@ -8,7 +8,8 @@ layout(binding = 0) uniform PostProcessFragmentUBO {
     float gamma;
 
     float bloomIntensity;
-    vec3 padding;
+    bool fxaaEnabled;
+    vec2 padding;
 } ubo;
 
 layout(binding = 0) uniform sampler2D sceneTex;
@@ -78,8 +79,14 @@ vec3 fxaa(sampler2D tex, vec2 uv, vec2 screenSize) {
 void main() {
     vec2 uv = gl_FragCoord.xy / vec2(textureSize(sceneTex, 0));
 
+    vec3 color;
+    
     // FXAA
-    vec3 color = fxaa(sceneTex, uv, ubo.screenSize);
+    if (ubo.fxaaEnabled) {
+        color = fxaa(sceneTex, uv, ubo.screenSize);
+    } else {
+        color = texture(sceneTex, uv).rgb;
+    }
 
     // SSAO
     float aoFactor = texture(ssaoTex, uv).r;

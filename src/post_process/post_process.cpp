@@ -5,6 +5,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <imgui.h>
 
+#include "../resource_manager/dds_loader.h"
 #include "../utils/utils.h"
 
 PostProcess::PostProcess(SDL_GPUSampleCount sampleCount)
@@ -31,6 +32,72 @@ PostProcess::PostProcess(SDL_GPUSampleCount sampleCount)
     pp.target_info.num_color_targets = 1;
     pp.target_info.color_target_descriptions = colorTargetDesc;
     m_postProcessPipeline = SDL_CreateGPUGraphicsPipeline(Utils::device, &pp);
+
+    // --- SMAA Edge Pass ---
+    SDL_GPUColorTargetDescription smaaEdgeDesc{};
+    smaaEdgeDesc.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+
+    SDL_GPUGraphicsPipelineCreateInfo smaaEdgeInfo{};
+    smaaEdgeInfo.vertex_shader = m_fullscreenVert;
+    smaaEdgeInfo.fragment_shader = Utils::loadShader(
+        "src/shaders/smaa_edge.frag",
+        1,
+        1,
+        SDL_GPU_SHADERSTAGE_FRAGMENT);
+    smaaEdgeInfo.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    smaaEdgeInfo.target_info.num_color_targets = 1;
+    smaaEdgeInfo.target_info.color_target_descriptions = &smaaEdgeDesc;
+
+    m_smaaEdgePipeline = SDL_CreateGPUGraphicsPipeline(Utils::device, &smaaEdgeInfo);
+    if (!m_smaaEdgePipeline)
+    {
+        SDL_Log("Failed to create m_smaaEdgePipeline: %s", SDL_GetError());
+        return;
+    }
+
+    // --- SMAA Blend Weights Pass ---
+    SDL_GPUColorTargetDescription smaaBlendDesc{};
+    smaaBlendDesc.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+
+    SDL_GPUGraphicsPipelineCreateInfo smaaBlendInfo{};
+    smaaBlendInfo.vertex_shader = m_fullscreenVert;
+    smaaBlendInfo.fragment_shader = Utils::loadShader(
+        "src/shaders/smaa_blend.frag", 3, 1,
+        SDL_GPU_SHADERSTAGE_FRAGMENT);
+    smaaBlendInfo.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    smaaBlendInfo.target_info.num_color_targets = 1;
+    smaaBlendInfo.target_info.color_target_descriptions = &smaaBlendDesc;
+
+    m_smaaBlendPipeline = SDL_CreateGPUGraphicsPipeline(Utils::device, &smaaBlendInfo);
+    if (!m_smaaBlendPipeline)
+    {
+        SDL_Log("Failed to create m_smaaBlendPipeline: %s", SDL_GetError());
+        return;
+    }
+
+    // --- SMAA Neighborhood Blending Pass ---
+    SDL_GPUColorTargetDescription smaaColorDesc{};
+    smaaColorDesc.format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT; // same as m_colorTexture
+
+    SDL_GPUGraphicsPipelineCreateInfo smaaNeighborInfo{};
+    smaaNeighborInfo.vertex_shader = m_fullscreenVert;
+    smaaNeighborInfo.fragment_shader = Utils::loadShader(
+        "src/shaders/smaa_neighbor.frag",
+        /*numSamplers=*/2, // scene + blend weights
+        /*numUniforms=*/1,
+        SDL_GPU_SHADERSTAGE_FRAGMENT);
+    smaaNeighborInfo.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    smaaNeighborInfo.target_info.num_color_targets = 1;
+    smaaNeighborInfo.target_info.color_target_descriptions = &smaaColorDesc;
+
+    m_smaaNeighborPipeline = SDL_CreateGPUGraphicsPipeline(Utils::device, &smaaNeighborInfo);
+    if (!m_smaaNeighborPipeline)
+    {
+        SDL_Log("Failed to create m_smaaNeighborPipeline: %s", SDL_GetError());
+        return;
+    }
+
+    loadSmaaLuts();
 
     colorTargetDesc[0].format = SDL_GPU_TEXTUREFORMAT_R11G11B10_UFLOAT;
     pp.target_info.color_target_descriptions = colorTargetDesc;
@@ -113,6 +180,7 @@ PostProcess::PostProcess(SDL_GPUSampleCount sampleCount)
     m_UBO.exposure = 1.1f;
     m_UBO.gamma = 2.2f;
     m_UBO.bloomIntensity = 0.2f;
+    m_UBO.fxaaEnabled = 0;
     m_upsampleUBO.filterRadius = 1.;
     m_downsampleUBO.highlight = 100.0f;
 
@@ -128,6 +196,9 @@ PostProcess::PostProcess(SDL_GPUSampleCount sampleCount)
     }
 
     m_sampleCount = sampleCount;
+
+    m_aaMode = AA_SMAA;
+    m_smaaUniforms.edgeDetectionMode = 0;
 }
 
 PostProcess::~PostProcess()
@@ -146,12 +217,28 @@ PostProcess::~PostProcess()
     SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_bloomUpPipeline);
     SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_gtaoGenPipeline);
     SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_gtaoBlurPipeline);
+
+    // SMAA
+    SDL_ReleaseGPUTexture(Utils::device, m_smaaEdgeTex);
+    SDL_ReleaseGPUTexture(Utils::device, m_smaaBlendTex);
+    SDL_ReleaseGPUTexture(Utils::device, m_smaaColorTex);
+    SDL_ReleaseGPUTexture(Utils::device, m_smaaAreaTex);
+    SDL_ReleaseGPUTexture(Utils::device, m_smaaSearchTex);
+    SDL_ReleaseGPUSampler(Utils::device, m_smaaLutSampler);
+    SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_smaaEdgePipeline);
+    SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_smaaBlendPipeline);
+    SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_smaaNeighborPipeline);
 }
 
 void PostProcess::renderUI()
 {
     if (!ImGui::CollapsingHeader("Post Process", ImGuiTreeNodeFlags_DefaultOpen))
         return;
+
+    const char *aaItems[] = {"None", "FXAA", "SMAA"};
+    int aaMode = m_aaMode;
+    if (ImGui::Combo("Anti-Aliasing", &aaMode, aaItems, IM_ARRAYSIZE(aaItems)))
+        setAntiAliasingMode((AntiAliasingMode)aaMode);
 
     if (ImGui::TreeNode("MSAA"))
     {
@@ -272,6 +359,46 @@ void PostProcess::renderUI()
         ImGui::TreePop();
     }
 
+    if (ImGui::TreeNode("SMAA"))
+    {
+        const char *edgeItems[] = {"Color-based (better quality)", "Luma-based (faster)"};
+        int edgeMode = m_smaaUniforms.edgeDetectionMode;
+
+        if (ImGui::Combo("Edge Detection", &edgeMode, edgeItems, IM_ARRAYSIZE(edgeItems)))
+            m_smaaUniforms.edgeDetectionMode = edgeMode;
+
+        float scale = 0.4f;
+        ImVec2 size(m_UBO.screenSize.x * scale, m_UBO.screenSize.y * scale);
+
+        ImGui::Text("m_smaaEdgeTex");
+        ImGui::Image((ImTextureID)(m_smaaEdgeTex), size);
+        ImGui::Text("m_smaaBlendTex");
+        ImGui::Image((ImTextureID)(m_smaaBlendTex), size);
+        ImGui::Text("m_smaaColorTex");
+        ImGui::Image((ImTextureID)(m_smaaColorTex), size);
+
+        if (ImGui::TreeNode("Lut Textures"))
+        {
+
+#define AREATEX_WIDTH 160
+#define AREATEX_HEIGHT 560
+#define SEARCHTEX_WIDTH 64
+#define SEARCHTEX_HEIGHT 16
+
+            ImVec2 sizeArea(AREATEX_WIDTH, AREATEX_HEIGHT);
+            ImVec2 sizeSearch(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT);
+
+            ImGui::Text("m_smaaAreaTex");
+            ImGui::Image((ImTextureID)(m_smaaAreaTex), sizeArea);
+            ImGui::Text("m_smaaSearchTex");
+            ImGui::Image((ImTextureID)(m_smaaSearchTex), sizeSearch);
+
+            ImGui::TreePop();
+        }
+
+        ImGui::TreePop();
+    }
+
     if (ImGui::TreeNode("Textures"))
     {
         ImGui::Text("Color");
@@ -281,6 +408,12 @@ void PostProcess::renderUI()
 
         ImGui::TreePop();
     }
+}
+
+void PostProcess::setAntiAliasingMode(AntiAliasingMode mode)
+{
+    m_aaMode = (AntiAliasingMode)mode;
+    m_UBO.fxaaEnabled = (m_aaMode == AA_FXAA) ? 1 : 0;
 }
 
 void PostProcess::update(glm::ivec2 screenSize)
@@ -386,6 +519,47 @@ void PostProcess::update(glm::ivec2 screenSize)
 
         m_gtaoBlurTexture = SDL_CreateGPUTexture(Utils::device, &gtaoBlurInfo);
         SDL_SetGPUTextureName(Utils::device, m_gtaoBlurTexture, "GTAO Blur");
+
+        // SMAA edge texture
+        if (m_smaaEdgeTex)
+            SDL_ReleaseGPUTexture(Utils::device, m_smaaEdgeTex);
+
+        SDL_GPUTextureCreateInfo edgeInfo{};
+        edgeInfo.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        edgeInfo.width = screenSize.x;
+        edgeInfo.height = screenSize.y;
+        edgeInfo.num_levels = 1;
+        edgeInfo.type = SDL_GPU_TEXTURETYPE_2D;
+        edgeInfo.layer_count_or_depth = 1;
+        edgeInfo.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        m_smaaEdgeTex = SDL_CreateGPUTexture(Utils::device, &edgeInfo);
+
+        // SMAA blend weights texture
+        if (m_smaaBlendTex)
+            SDL_ReleaseGPUTexture(Utils::device, m_smaaBlendTex);
+
+        SDL_GPUTextureCreateInfo blendInfo = edgeInfo;
+        m_smaaBlendTex = SDL_CreateGPUTexture(Utils::device, &blendInfo);
+
+        // SMAA output color texture
+        if (m_smaaColorTex)
+            SDL_ReleaseGPUTexture(Utils::device, m_smaaColorTex);
+
+        SDL_GPUTextureCreateInfo smaaColorInfo{};
+        smaaColorInfo.format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
+        smaaColorInfo.width = screenSize.x;
+        smaaColorInfo.height = screenSize.y;
+        smaaColorInfo.num_levels = 1;
+        smaaColorInfo.type = SDL_GPU_TEXTURETYPE_2D;
+        smaaColorInfo.layer_count_or_depth = 1;
+        smaaColorInfo.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        m_smaaColorTex = SDL_CreateGPUTexture(Utils::device, &smaaColorInfo);
+
+        m_smaaUniforms.rtMetrics = glm::vec4(
+            1.0f / screenSize.x,
+            1.0f / screenSize.y,
+            (float)screenSize.x,
+            (float)screenSize.y);
 
         lastW = screenSize.x;
         lastH = screenSize.y;
@@ -552,6 +726,81 @@ void PostProcess::computeGTAO(
     SDL_EndGPURenderPass(blurPass);
 }
 
+void PostProcess::runSMAA(SDL_GPUCommandBuffer *cmd)
+{
+    if (m_aaMode != AA_SMAA)
+        return;
+
+    if (!m_colorTexture || !m_smaaEdgeTex || !m_smaaBlendTex || !m_smaaColorTex)
+        return;
+
+    // Push SMAA_RT_METRICS
+    SDL_PushGPUFragmentUniformData(cmd, 0, &m_smaaUniforms, sizeof(m_smaaUniforms));
+
+    // --- 1) Edge detection ---
+    SDL_GPUColorTargetInfo edgeTarget{};
+    edgeTarget.texture = m_smaaEdgeTex;
+    edgeTarget.load_op = SDL_GPU_LOADOP_CLEAR;
+    edgeTarget.store_op = SDL_GPU_STOREOP_STORE;
+    edgeTarget.clear_color = {0, 0, 0, 0};
+
+    SDL_GPURenderPass *edgePass = SDL_BeginGPURenderPass(cmd, &edgeTarget, 1, nullptr);
+    {
+        SDL_BindGPUGraphicsPipeline(edgePass, m_smaaEdgePipeline);
+
+        // IMPORTANT: for best results the input read for the color/luma edge detection should *NOT* be sRGB.
+        SDL_GPUTextureSamplerBinding colorBind{m_colorTexture, m_smaaLutSampler};
+        SDL_BindGPUFragmentSamplers(edgePass, 0, &colorBind, 1);
+        SDL_DrawGPUPrimitives(edgePass, 3, 1, 0, 0);
+    }
+    SDL_EndGPURenderPass(edgePass);
+
+    // --- 2) Blend weight calculation ---
+    SDL_GPUColorTargetInfo blendTarget{};
+    blendTarget.texture = m_smaaBlendTex;
+    blendTarget.load_op = SDL_GPU_LOADOP_CLEAR;
+    blendTarget.store_op = SDL_GPU_STOREOP_STORE;
+    blendTarget.clear_color = {0, 0, 0, 0};
+
+    SDL_GPURenderPass *blendPass = SDL_BeginGPURenderPass(cmd, &blendTarget, 1, nullptr);
+    {
+        SDL_BindGPUGraphicsPipeline(blendPass, m_smaaBlendPipeline);
+
+        SDL_GPUTextureSamplerBinding samplers[3] =
+            {
+                {m_smaaEdgeTex, m_smaaLutSampler},   // edge texture
+                {m_smaaAreaTex, m_smaaLutSampler},   // area LUT
+                {m_smaaSearchTex, m_smaaLutSampler}, // search LUT
+            };
+        SDL_BindGPUFragmentSamplers(blendPass, 0, samplers, 3);
+
+        SDL_DrawGPUPrimitives(blendPass, 3, 1, 0, 0);
+    }
+    SDL_EndGPURenderPass(blendPass);
+
+    // --- 3) Neighborhood blending ---
+    SDL_GPUColorTargetInfo colorTarget{};
+    colorTarget.texture = m_smaaColorTex;
+    colorTarget.load_op = SDL_GPU_LOADOP_CLEAR;
+    colorTarget.store_op = SDL_GPU_STOREOP_STORE;
+    colorTarget.clear_color = {0, 0, 0, 0};
+
+    SDL_GPURenderPass *neighborPass = SDL_BeginGPURenderPass(cmd, &colorTarget, 1, nullptr);
+    {
+        SDL_BindGPUGraphicsPipeline(neighborPass, m_smaaNeighborPipeline);
+
+        SDL_GPUTextureSamplerBinding samplers[2] =
+            {
+                {m_colorTexture, m_smaaLutSampler},
+                {m_smaaBlendTex, m_smaaLutSampler},
+            };
+        SDL_BindGPUFragmentSamplers(neighborPass, 0, samplers, 2);
+
+        SDL_DrawGPUPrimitives(neighborPass, 3, 1, 0, 0);
+    }
+    SDL_EndGPURenderPass(neighborPass);
+}
+
 void PostProcess::postProcess(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTexture *swapchainTexture)
 {
     SDL_GPUColorTargetInfo finalTarget{};
@@ -560,13 +809,17 @@ void PostProcess::postProcess(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTextur
     finalTarget.store_op = SDL_GPU_STOREOP_STORE;
     finalTarget.clear_color = {0.f, 0.f, 0.f, 1.f};
 
+    SDL_GPUTexture *color = m_colorTexture;
+    if (m_aaMode == AA_SMAA)
+        color = m_smaaColorTex;
+
     SDL_GPURenderPass *finalPass = SDL_BeginGPURenderPass(commandBuffer, &finalTarget, 1, nullptr);
     {
         SDL_BindGPUGraphicsPipeline(finalPass, m_postProcessPipeline);
 
         SDL_GPUTextureSamplerBinding inputs[3] =
             {
-                {m_colorTexture, Utils::baseSampler},
+                {color, Utils::baseSampler},
                 {m_bloomMip[0], Utils::baseSampler},
                 {m_gtaoBlurTexture, Utils::baseSampler},
             };
@@ -577,4 +830,68 @@ void PostProcess::postProcess(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTextur
         SDL_DrawGPUPrimitives(finalPass, 3, 1, 0, 0);
     }
     SDL_EndGPURenderPass(finalPass);
+}
+
+void PostProcess::loadSmaaLuts()
+{
+    if (!m_smaaLutSampler)
+    {
+        SDL_GPUSamplerCreateInfo samplerInfo{};
+        samplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
+        samplerInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
+        samplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
+        samplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        samplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        samplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+
+        m_smaaLutSampler = SDL_CreateGPUSampler(Utils::device, &samplerInfo);
+    }
+
+    std::string exePath = Utils::getExecutablePath();
+
+    // --- AREA TEXTURE (RG8) ---
+    // Ensure you save "AreaTex.dds" as Uncompressed R8G8 (or A8L8 legacy)
+    loadSmaaTextureFromDDS(&m_smaaAreaTex,
+                           std::string(exePath + "/src/assets/textures/AreaTexDX9.dds").c_str(),
+                           SDL_GPU_TEXTUREFORMAT_R8G8_UNORM);
+
+    SDL_SetGPUTextureName(Utils::device, m_smaaAreaTex, "SMAA Area");
+
+    // --- SEARCH TEXTURE (R8) ---
+    // Ensure you save "SearchTex.dds" as Uncompressed R8 (Luminance)
+    loadSmaaTextureFromDDS(&m_smaaSearchTex,
+                           std::string(exePath + "/src/assets/textures/SearchTex.dds").c_str(),
+                           SDL_GPU_TEXTUREFORMAT_R8_UNORM);
+
+    SDL_SetGPUTextureName(Utils::device, m_smaaSearchTex, "SMAA Search");
+}
+
+void PostProcess::loadSmaaTextureFromDDS(SDL_GPUTexture **textureOut,
+                                         const char *filepath,
+                                         SDL_GPUTextureFormat expectedFormat)
+{
+    DDSTextureInfo *info = DDSLoader::LoadFromFile(Utils::device, filepath);
+
+    if (!info)
+    {
+        SDL_Log("Failed to load SMAA texture: %s", filepath);
+        return;
+    }
+
+    // Verify it's the expected format
+    if (info->format != expectedFormat)
+    {
+        SDL_Log("Warning: Loaded format (%d) differs from expected (%d)",
+                info->format, expectedFormat);
+    }
+
+    if (*textureOut)
+    {
+        SDL_ReleaseGPUTexture(Utils::device, *textureOut);
+    }
+
+    *textureOut = info->texture;
+    info->texture = nullptr; // Transfer ownership
+
+    DDSLoader::Release(Utils::device, info);
 }

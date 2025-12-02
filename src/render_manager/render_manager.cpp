@@ -25,7 +25,7 @@ RenderManager::RenderManager(
     m_shadowManager = new ShadowManager();
 
     createDefaultResources();
-    createPipeline(SDL_GPU_SAMPLECOUNT_4);
+    createPipeline(sampleCount);
 
     m_fragmentUniforms.lightDir = glm::normalize(glm::vec3(-0.3f, -0.8f, -0.3f));
     m_fragmentUniforms.lightColor = glm::vec3(1.0f) * 6.0f;

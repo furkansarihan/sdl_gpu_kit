@@ -195,4 +195,28 @@ public:
         // Fallback to no MSAA if nothing is supported (shouldn't happen)
         return SDL_GPU_SAMPLECOUNT_1;
     }
+
+    static SDL_GPUSampleCount getClosestSupportedMSAA(SDL_GPUSampleCount desiredCount)
+    {
+        SDL_GPUTextureFormat format = SDL_GetGPUSwapchainTextureFormat(device, window);
+
+        const SDL_GPUSampleCount sampleCounts[] = {
+            SDL_GPU_SAMPLECOUNT_8,
+            SDL_GPU_SAMPLECOUNT_4,
+            SDL_GPU_SAMPLECOUNT_2,
+            SDL_GPU_SAMPLECOUNT_1};
+
+        for (SDL_GPUSampleCount currentCount : sampleCounts)
+        {
+            if (currentCount <= desiredCount)
+            {
+                if (SDL_GPUTextureSupportsSampleCount(device, format, currentCount))
+                {
+                    return currentCount;
+                }
+            }
+        }
+
+        return SDL_GPU_SAMPLECOUNT_1;
+    }
 };
