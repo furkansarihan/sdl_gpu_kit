@@ -26,7 +26,6 @@
 
 #include "post_process/post_process.h"
 #include "render_manager/render_manager.h"
-#include "resource_manager/renderable_model.h"
 #include "resource_manager/resource_manager.h"
 #include "shadow_manager/shadow_manager.h"
 #include "update_manager/update_manager.h"

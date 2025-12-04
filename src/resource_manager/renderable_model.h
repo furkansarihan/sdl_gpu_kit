@@ -1,3 +1,5 @@
+#pragma once
+
 #include "../render_manager/render_manager.h"
 #include "resource_manager.h"
 
@@ -20,6 +22,19 @@ public:
           m_castingShadow(true)
     {
     }
+
+    static void renderPrimitive(
+        const PrimitiveData &prim,
+        const glm::mat4 &model,
+        bool blend,
+        bool checkDoubleSide,
+        bool doubleSide,
+        RenderManager *renderManager,
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &view,
+        const glm::mat4 &projection,
+        const Frustum &frustum);
 
     void renderModel(
         bool blend,
@@ -56,5 +71,5 @@ public:
         const Frustum &frustum) override;
 
 private:
-    void bindTextures(SDL_GPURenderPass *pass, Material *mat);
+    static void bindTextures(RenderManager *renderManager, SDL_GPURenderPass *pass, Material *mat);
 };

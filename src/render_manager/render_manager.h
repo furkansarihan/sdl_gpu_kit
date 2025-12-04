@@ -103,6 +103,7 @@ public:
 
     SDL_GPUGraphicsPipeline *m_pbrPipeline;
     SDL_GPUGraphicsPipeline *m_pbrDoubleSided;
+    SDL_GPUGraphicsPipeline *m_pbrWireframePipeline;
     SDL_GPUSampler *m_baseSampler;
     SDL_GPUTexture *m_defaultTexture;
 

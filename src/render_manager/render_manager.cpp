@@ -248,6 +248,14 @@ void RenderManager::createPipeline(SDL_GPUSampleCount sampleCount)
         return;
     }
 
+    pipelineInfo.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;
+    m_pbrWireframePipeline = SDL_CreateGPUGraphicsPipeline(m_device, &pipelineInfo);
+    if (m_pbrWireframePipeline == nullptr)
+    {
+        SDL_Log("Failed to create m_pbrWireframePipeline: %s", SDL_GetError());
+        return;
+    }
+
     SDL_ReleaseGPUShader(m_device, fragmentShader);
 
     // --- 2. OIT Geometry Pipeline ---
