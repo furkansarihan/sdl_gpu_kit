@@ -2,9 +2,25 @@
 
 #include <glm/gtx/norm.hpp>
 
+#include <imgui.h>
+
 #include "default_runner.h"
 #include "ui/root_ui.h"
 #include "utils/utils.h"
+
+void CameraController::renderUI()
+{
+    if (!ImGui::CollapsingHeader("Camera Controller", ImGuiTreeNodeFlags_DefaultOpen))
+        return;
+
+    ImGui::PushID(this);
+
+    ImGui::DragFloat("Field Of View", &m_camera->fov, 0.1f);
+    ImGui::DragFloat("Far", &m_camera->far, 1.f);
+    ImGui::DragFloat("Move Speed", &m_baseSpeed, 0.1f);
+
+    ImGui::PopID();
+}
 
 void CameraController::onKeyPressed(SDL_Scancode key)
 {

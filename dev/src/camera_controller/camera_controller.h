@@ -2,9 +2,10 @@
 
 #include "camera.h"
 #include "input_manager/input_manager.h"
+#include "ui/base_ui.h"
 #include "update_manager/update_manager.h"
 
-class CameraController : public Updatable, public InputListener
+class CameraController : public BaseUI, public InputListener, public Updatable
 {
 public:
     explicit CameraController(Camera *camera)
@@ -25,7 +26,10 @@ public:
     bool m_relativeMouseEnabled = false;
     bool m_uiHidden = false;
 
-    void update(float deltaTime) override;
+    void renderUI() override;
+
     void onKeyPressed(SDL_Scancode key) override;
     void onMouseMoved(int x, int y, int dx, int dy) override;
+
+    void update(float deltaTime) override;
 };

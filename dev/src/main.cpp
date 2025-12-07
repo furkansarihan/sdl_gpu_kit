@@ -8,6 +8,7 @@
 #include "render_manager/render_manager.h"
 #include "resource_manager/renderable_model.h"
 #include "resource_manager/resource_manager.h"
+#include "ui/root_ui.h"
 #include "update_manager/update_manager.h"
 #include "utils/utils.h"
 
@@ -29,11 +30,13 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     ResourceManager *resourceManager = runner->m_resourceManager;
     RenderManager *renderManager = runner->m_renderManager;
     UpdateManager *updateManager = runner->m_updateManager;
+    RootUI *rootUI = runner->m_rootUI;
 
     // create fly camera
     g_cameraController = new CameraController(runner->m_camera);
-    updateManager->add(g_cameraController);
+    rootUI->add(g_cameraController);
     InputManager::getInstance().addListener(g_cameraController);
+    updateManager->add(g_cameraController);
 
     std::string exePath = Utils::getExecutablePath();
 
