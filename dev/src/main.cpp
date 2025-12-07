@@ -8,11 +8,14 @@
 #include "render_manager/render_manager.h"
 #include "resource_manager/renderable_model.h"
 #include "resource_manager/resource_manager.h"
-
+#include "update_manager/update_manager.h"
 #include "utils/utils.h"
 
-std::vector<RenderableModel *> g_renderableModels;
+#include "camera_controller/camera_controller.h"
+
+CameraController *g_cameraController;
 Texture g_hdrTexture;
+std::vector<RenderableModel *> g_renderableModels;
 
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 {
@@ -25,6 +28,12 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 
     ResourceManager *resourceManager = runner->m_resourceManager;
     RenderManager *renderManager = runner->m_renderManager;
+    UpdateManager *updateManager = runner->m_updateManager;
+
+    // create fly camera
+    g_cameraController = new CameraController(runner->m_camera);
+    updateManager->add(g_cameraController);
+    InputManager::getInstance().addListener(g_cameraController);
 
     std::string exePath = Utils::getExecutablePath();
 
@@ -36,11 +45,11 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     g_hdrTexture = resourceManager->loadTextureFromFile(params, std::string(exePath + "/" + hdriPath));
     renderManager->m_pbrManager->updateEnvironmentTexture(g_hdrTexture);
 
-    // Load Asset
+    // load asset
     const char *modelPath = "assets/models/DamagedHelmet.glb";
     ModelData *model = resourceManager->loadModel(std::string(exePath + "/" + modelPath).c_str());
 
-    // Create Renderable Instance
+    // create RenderableModel instance
     if (model)
     {
         RenderableModel *renderable = new RenderableModel(model, renderManager);
@@ -68,8 +77,12 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
     if (!appstate)
         return;
 
+    delete g_cameraController;
+
     auto *runner = static_cast<DefaultRunner *>(appstate);
     ResourceManager *resourceManager = runner->m_resourceManager;
+
+    resourceManager->dispose(g_hdrTexture);
 
     for (RenderableModel *obj : g_renderableModels)
     {
@@ -78,8 +91,6 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
         delete obj;
     }
     g_renderableModels.clear();
-
-    resourceManager->dispose(g_hdrTexture);
 
     runner->Quit();
     delete runner;

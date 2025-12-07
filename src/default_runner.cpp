@@ -24,6 +24,7 @@
 #include "ui/system_monitor/system_monitor_ui.h"
 #include "utils/utils.h"
 
+#include "input_manager/input_manager.h"
 #include "post_process/post_process.h"
 #include "render_manager/render_manager.h"
 #include "resource_manager/resource_manager.h"
@@ -40,10 +41,6 @@ Camera *DefaultRunner::m_camera = nullptr;
 DefaultRunner::DefaultRunner(glm::ivec2 windowSize)
     : m_initWindowSize(windowSize)
 {
-    // Initialize input arrays
-    std::memset(m_keys, 0, sizeof(m_keys));
-    std::memset(m_mouseButtons, 0, sizeof(m_mouseButtons));
-
     m_width = windowSize.x;
     m_height = windowSize.y;
 }
@@ -51,29 +48,6 @@ DefaultRunner::DefaultRunner(glm::ivec2 windowSize)
 DefaultRunner::~DefaultRunner()
 {
     // Cleanup is handled in Quit()
-}
-
-void DefaultRunner::UpdateCamera(float dt)
-{
-    float velocity = m_camera->speed * dt;
-
-    if (m_keys[SDL_SCANCODE_LSHIFT])
-        velocity *= 0.2f;
-    if (m_keys[SDL_SCANCODE_SPACE])
-        velocity *= 5.f;
-
-    glm::vec3 direction(0.f);
-    if (m_keys[SDL_SCANCODE_W])
-        direction += m_camera->front;
-    if (m_keys[SDL_SCANCODE_S])
-        direction -= m_camera->front;
-    if (m_keys[SDL_SCANCODE_A])
-        direction -= glm::normalize(glm::cross(m_camera->front, m_camera->up));
-    if (m_keys[SDL_SCANCODE_D])
-        direction += glm::normalize(glm::cross(m_camera->front, m_camera->up));
-
-    if (glm::length2(direction) > 0.f)
-        m_camera->position += glm::normalize(direction) * velocity;
 }
 
 SDL_AppResult DefaultRunner::Init(int argc, char **argv)
@@ -156,7 +130,6 @@ SDL_AppResult DefaultRunner::Iterate()
     m_deltaTime = (currentFrame - m_lastFrame) / 1e9f;
     m_lastFrame = currentFrame;
 
-    UpdateCamera(m_deltaTime);
     m_camera->view = glm::lookAt(m_camera->position, m_camera->position + m_camera->front, m_camera->up);
     m_camera->projection = glm::perspective(glm::radians(m_camera->fov), (float)m_width / (float)m_height, m_camera->near, m_camera->far);
     m_updateManager->update(m_deltaTime);
@@ -308,45 +281,12 @@ SDL_AppResult DefaultRunner::Iterate()
 
 SDL_AppResult DefaultRunner::ProcessEvent(SDL_Event *event)
 {
+    InputManager::getInstance().processEvent(*event);
+
     ImGui_ImplSDL3_ProcessEvent(event);
 
     if (event->type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
         return SDL_APP_SUCCESS;
-
-    if (event->type == SDL_EVENT_KEY_DOWN)
-        m_keys[event->key.scancode] = true;
-    if (event->type == SDL_EVENT_KEY_UP)
-        m_keys[event->key.scancode] = false;
-    if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN)
-        m_mouseButtons[event->button.button] = true;
-    if (event->type == SDL_EVENT_MOUSE_BUTTON_UP)
-        m_mouseButtons[event->button.button] = false;
-
-    if (event->type == SDL_EVENT_MOUSE_MOTION && m_mouseButtons[SDL_BUTTON_RIGHT])
-    {
-        float xoffset = event->motion.xrel * m_camera->sensitivity;
-        float yoffset = -event->motion.yrel * m_camera->sensitivity;
-
-        m_camera->yaw += xoffset;
-        m_camera->pitch += yoffset;
-
-        if (m_camera->pitch > 89.0f)
-            m_camera->pitch = 89.0f;
-        if (m_camera->pitch < -89.0f)
-            m_camera->pitch = -89.0f;
-
-        glm::vec3 direction;
-        direction.x = cos(glm::radians(m_camera->yaw)) * cos(glm::radians(m_camera->pitch));
-        direction.y = sin(glm::radians(m_camera->pitch));
-        direction.z = sin(glm::radians(m_camera->yaw)) * cos(glm::radians(m_camera->pitch));
-        m_camera->front = glm::normalize(direction);
-    }
-
-    if (event->type == SDL_EVENT_KEY_DOWN && event->key.scancode == SDL_SCANCODE_ESCAPE)
-    {
-        bool relative = SDL_GetWindowRelativeMouseMode(m_window);
-        SDL_SetWindowRelativeMouseMode(m_window, !relative);
-    }
 
     return SDL_APP_CONTINUE;
 }
@@ -365,6 +305,8 @@ void DefaultRunner::Quit()
         delete m_postProcess;
     if (m_updateManager)
         delete m_updateManager;
+    if (m_camera)
+        delete m_camera;
 
     if (m_device)
         SDL_DestroyGPUDevice(m_device);

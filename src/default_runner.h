@@ -8,9 +8,8 @@ class SystemMonitorUI;
 class ResourceManager;
 class RenderManager;
 class PostProcess;
-struct RenderableModel;
-struct Texture;
 struct UpdateManager;
+struct InputManager;
 
 #include "camera.h"
 
@@ -23,10 +22,6 @@ public:
     // Core SDL resources
     SDL_Window *m_window = nullptr;
     SDL_GPUDevice *m_device = nullptr;
-
-    // Input State
-    bool m_keys[SDL_SCANCODE_COUNT]{};
-    bool m_mouseButtons[6]{};
 
     // Time State
     float m_deltaTime = 0.0f;
@@ -44,8 +39,6 @@ public:
     static PostProcess *m_postProcess;
     static UpdateManager *m_updateManager;
     static Camera *m_camera;
-
-    void UpdateCamera(float dt);
 
     // Core application lifecycle methods
     SDL_AppResult Init(int argc, char **argv);

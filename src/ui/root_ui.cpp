@@ -7,7 +7,7 @@
 #include "../external/imgui/imgui_impl_sdlgpu3.h"
 
 RootUI::RootUI()
-    : m_enabled(true)
+    : m_hidden(false)
 {
     ImGuiStyle &style = ImGui::GetStyle();
 
@@ -26,7 +26,7 @@ RootUI::~RootUI()
 
 void RootUI::render(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTexture *swapchainTexture)
 {
-    if (!m_enabled)
+    if (m_hidden)
         return;
 
     // Start the Dear ImGui frame
