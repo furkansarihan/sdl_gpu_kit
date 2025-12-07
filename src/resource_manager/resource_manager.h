@@ -7,12 +7,16 @@
 
 #include <glm/glm.hpp>
 
+#include "../animation/animation.h"
+
 struct Vertex
 {
     glm::vec3 position;
     glm::vec3 normal;
     glm::vec2 uv;
     glm::vec4 tangent; // xyz = tangent direction, w = handedness (+1 or -1)
+    glm::uvec4 joints;
+    glm::vec4 weights;
 };
 
 struct Texture
@@ -105,6 +109,7 @@ struct ModelData
     std::vector<MeshData> meshes;
     std::vector<Material *> materials;
     std::vector<Texture> textures;
+    std::vector<Animation *> animations;
 };
 
 enum class TextureDataType

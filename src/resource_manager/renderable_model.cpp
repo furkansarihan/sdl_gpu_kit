@@ -87,7 +87,7 @@ void RenderableModel::renderPrimitive(
     }
     else
     {
-        SDL_DrawGPUPrimitives(pass, (Uint32)prim.vertices.size(), 0, 0, 0);
+        SDL_DrawGPUPrimitives(pass, (Uint32)prim.vertices.size(), 1, 0, 0);
     }
 }
 
@@ -107,7 +107,7 @@ void RenderableModel::renderModel(
             continue;
 
         const MeshData &mesh = m_model->meshes[node.meshIndex];
-        const glm::mat4 &world = node.worldTransform;
+        const glm::mat4 &world = m_animator ? m_animator->m_finalBoneMatrices[0] : node.worldTransform;
 
         for (const auto &prim : mesh.primitives)
         {
@@ -123,6 +123,9 @@ void RenderableModel::renderOpaque(
     const glm::mat4 &projection,
     const Frustum &frustum)
 {
+    if (m_animator)
+        return;
+
     renderModel(false, true, false, cmd, pass, view, projection, frustum);
 }
 
@@ -133,6 +136,9 @@ void RenderableModel::renderOpaqueDoubleSided(
     const glm::mat4 &projection,
     const Frustum &frustum)
 {
+    if (m_animator)
+        return;
+
     renderModel(false, true, true, cmd, pass, view, projection, frustum);
 }
 
@@ -143,18 +149,35 @@ void RenderableModel::renderTransparent(
     const glm::mat4 &projection,
     const Frustum &frustum)
 {
+    if (m_animator)
+        return;
+
     renderModel(true, false, true, cmd, pass, view, projection, frustum);
 }
 
-void RenderableModel::renderShadow(
+void RenderableModel::renderAnimation(
+    SDL_GPUCommandBuffer *cmd,
+    SDL_GPURenderPass *pass,
+    const glm::mat4 &view,
+    const glm::mat4 &projection,
+    const Frustum &frustum)
+{
+    if (!m_animator)
+        return;
+
+    size_t boneCount = m_animator->m_finalBoneMatrices.size();
+    size_t bytes = boneCount * sizeof(glm::mat4);
+    SDL_PushGPUVertexUniformData(cmd, 1, m_animator->m_finalBoneMatrices.data(), bytes);
+
+    renderModel(false, false, false, cmd, pass, view, projection, frustum);
+}
+
+void RenderableModel::renderModelShadow(
     SDL_GPUCommandBuffer *cmd,
     SDL_GPURenderPass *pass,
     const glm::mat4 &viewProj,
     const Frustum &frustum)
 {
-    if (!m_castingShadow)
-        return;
-
     ShadowVertexUniforms shadowUniforms{};
     shadowUniforms.lightViewProj = viewProj;
 
@@ -163,7 +186,7 @@ void RenderableModel::renderShadow(
         if (node.meshIndex < 0)
             continue;
         const MeshData &mesh = m_model->meshes[node.meshIndex];
-        const glm::mat4 &world = node.worldTransform;
+        const glm::mat4 &world = m_animator ? m_animator->m_finalBoneMatrices[0] : node.worldTransform;
 
         for (const auto &prim : mesh.primitives)
         {
@@ -184,10 +207,44 @@ void RenderableModel::renderShadow(
             }
             else
             {
-                SDL_DrawGPUPrimitives(pass, (Uint32)prim.vertices.size(), 0, 0, 0);
+                SDL_DrawGPUPrimitives(pass, (Uint32)prim.vertices.size(), 1, 0, 0);
             }
         }
     }
+}
+
+void RenderableModel::renderShadow(
+    SDL_GPUCommandBuffer *cmd,
+    SDL_GPURenderPass *pass,
+    const glm::mat4 &viewProj,
+    const Frustum &frustum)
+{
+    if (!m_castingShadow)
+        return;
+
+    if (m_animator)
+        return;
+
+    renderModelShadow(cmd, pass, viewProj, frustum);
+}
+
+void RenderableModel::renderAnimationShadow(
+    SDL_GPUCommandBuffer *cmd,
+    SDL_GPURenderPass *pass,
+    const glm::mat4 &viewProj,
+    const Frustum &frustum)
+{
+    if (!m_castingShadow)
+        return;
+
+    if (!m_animator)
+        return;
+
+    size_t boneCount = m_animator->m_finalBoneMatrices.size();
+    size_t bytes = boneCount * sizeof(glm::mat4);
+    SDL_PushGPUVertexUniformData(cmd, 1, m_animator->m_finalBoneMatrices.data(), bytes);
+
+    renderModelShadow(cmd, pass, viewProj, frustum);
 }
 
 void RenderableModel::bindTextures(RenderManager *renderManager, SDL_GPURenderPass *pass, Material *mat)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../render_manager/render_manager.h"
+#include "animation/animator.h"
 #include "resource_manager.h"
 
 struct ShadowVertexUniforms
@@ -22,6 +23,8 @@ public:
           m_castingShadow(true)
     {
     }
+
+    Animator *m_animator = nullptr;
 
     static void renderPrimitive(
         const PrimitiveData &prim,
@@ -64,12 +67,29 @@ public:
         const glm::mat4 &view,
         const glm::mat4 &projection,
         const Frustum &frustum) override;
+    void renderAnimation(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &view,
+        const glm::mat4 &projection,
+        const Frustum &frustum) override;
+
+    void renderModelShadow(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &viewProj,
+        const Frustum &frustum);
+
     void renderShadow(
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,
         const glm::mat4 &viewProj,
         const Frustum &frustum) override;
+    void renderAnimationShadow(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &viewProj,
+        const Frustum &frustum) override;
 
-private:
     static void bindTextures(RenderManager *renderManager, SDL_GPURenderPass *pass, Material *mat);
 };

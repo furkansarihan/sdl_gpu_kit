@@ -101,7 +101,27 @@ ShadowManager::ShadowManager()
             SDL_Log("Failed to create shadow pipeline: %s", SDL_GetError());
         }
 
+        SDL_GPUShader *shadowAnimationVert = Utils::loadShader("src/shaders/shadow_csm_skinned.vert", 0, 2, SDL_GPU_SHADERSTAGE_VERTEX);
+        shadowInfo.vertex_shader = shadowAnimationVert;
+
+        SDL_GPUVertexAttribute vertexAnimAttributes[6]{};
+        vertexAnimAttributes[0] = {0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(Vertex, position)};
+        vertexAnimAttributes[1] = {1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(Vertex, normal)};
+        vertexAnimAttributes[2] = {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(Vertex, uv)};
+        vertexAnimAttributes[3] = {3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, offsetof(Vertex, tangent)};
+        vertexAnimAttributes[4] = {4, 0, SDL_GPU_VERTEXELEMENTFORMAT_UINT4, offsetof(Vertex, joints)};
+        vertexAnimAttributes[5] = {5, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, offsetof(Vertex, weights)};
+        shadowInfo.vertex_input_state.num_vertex_attributes = 6;
+        shadowInfo.vertex_input_state.vertex_attributes = vertexAnimAttributes;
+
+        m_shadowAnimationPipeline = SDL_CreateGPUGraphicsPipeline(Utils::device, &shadowInfo);
+        if (!m_shadowAnimationPipeline)
+        {
+            SDL_Log("Failed to create m_shadowAnimationPipeline: %s", SDL_GetError());
+        }
+
         SDL_ReleaseGPUShader(Utils::device, shadowVert);
+        SDL_ReleaseGPUShader(Utils::device, shadowAnimationVert);
         SDL_ReleaseGPUShader(Utils::device, shadowFrag);
     }
 
@@ -114,6 +134,8 @@ ShadowManager::~ShadowManager()
 {
     if (m_shadowPipeline)
         SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_shadowPipeline);
+    if (m_shadowAnimationPipeline)
+        SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_shadowAnimationPipeline);
     if (m_shadowMapTexture)
         SDL_ReleaseGPUTexture(Utils::device, m_shadowMapTexture);
     if (m_shadowSampler)
@@ -132,7 +154,7 @@ void ShadowManager::renderUI()
     ImGui::DragFloat("Shadow Far", &m_shadowUniforms.shadowFar, 0.2f, 0.f, 1000.f);
     // ImGui::DragFloat4("Bias", &shadowUniforms.cascadeBias.x, 0.00001f, 0.f, 1.f, "%.5f");
 
-    // TODO: 
+    // TODO:
     /* if (ImGui::TreeNodeEx("Camera", ImGuiTreeNodeFlags_DefaultOpen))
     {
         ImGui::DragFloat("Near", &m_camera->near, 0.1f, 0.f, 180.f);

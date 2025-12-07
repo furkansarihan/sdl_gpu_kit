@@ -37,13 +37,13 @@ public:
     Uint32 m_width, m_height;
 
     // Sub-systems
-    Camera m_camera;
-    RootUI *m_rootUI = nullptr;
     SystemMonitorUI *m_systemMonitorUI = nullptr;
-    ResourceManager *m_resourceManager = nullptr;
-    RenderManager *m_renderManager = nullptr;
-    PostProcess *m_postProcess = nullptr;
-    UpdateManager *m_updateManager = nullptr;
+    static RootUI *m_rootUI;
+    static ResourceManager *m_resourceManager;
+    static RenderManager *m_renderManager;
+    static PostProcess *m_postProcess;
+    static UpdateManager *m_updateManager;
+    static Camera *m_camera;
 
     void UpdateCamera(float dt);
 

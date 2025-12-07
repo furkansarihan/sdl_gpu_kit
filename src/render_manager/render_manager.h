@@ -76,7 +76,18 @@ public:
         const glm::mat4 &view,
         const glm::mat4 &projection,
         const Frustum &frustum) {};
+    virtual void renderAnimation(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &view,
+        const glm::mat4 &projection,
+        const Frustum &frustum) {};
     virtual void renderShadow(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &viewProj,
+        const Frustum &frustum) {};
+    virtual void renderAnimationShadow(
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,
         const glm::mat4 &viewProj,
@@ -104,6 +115,7 @@ public:
     SDL_GPUGraphicsPipeline *m_pbrPipeline;
     SDL_GPUGraphicsPipeline *m_pbrDoubleSided;
     SDL_GPUGraphicsPipeline *m_pbrWireframePipeline;
+    SDL_GPUGraphicsPipeline *m_pbrAnimation;
     SDL_GPUSampler *m_baseSampler;
     SDL_GPUTexture *m_defaultTexture;
 
@@ -134,10 +146,6 @@ public:
     void createPipeline(SDL_GPUSampleCount sampleCount);
 
     // Rendering
-    void renderShadow(
-        SDL_GPUCommandBuffer *cmd,
-        SDL_GPURenderPass *pass,
-        const glm::mat4 &viewProj);
     void renderOpaque(
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,

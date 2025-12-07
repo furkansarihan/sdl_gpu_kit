@@ -42,6 +42,9 @@ void ResourceManager::dispose(ModelData *model)
     for (auto texture : model->textures)
         dispose(texture);
 
+    for (auto animation : model->animations)
+        delete animation;
+
     delete model;
 }
 
@@ -453,14 +456,164 @@ ModelData *ResourceManager::loadModel(const std::string &path)
                 tangentStride = tangentView.byteStride ? tangentView.byteStride / sizeof(float) : 4; // Tangents are vec4
             }
 
+            // --- Joints (JOINTS_0) ---
+            bool hasJoints = prim.attributes.find("JOINTS_0") != prim.attributes.end();
+            const uint8_t *joints8 = nullptr;
+            const uint16_t *joints16 = nullptr;
+            int jointsStrideBytes = 0;
+            int jointsComponentType = 0;
+
+            if (hasJoints)
+            {
+                const auto &jAccessor = model.accessors[prim.attributes.at("JOINTS_0")];
+                const auto &jView = model.bufferViews[jAccessor.bufferView];
+                const auto &jBuffer = model.buffers[jView.buffer];
+
+                const uint8_t *raw = &jBuffer.data[jView.byteOffset + jAccessor.byteOffset];
+                jointsComponentType = jAccessor.componentType;
+
+                if (jAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE)
+                {
+                    joints8 = raw;
+                }
+                else if (jAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+                {
+                    joints16 = reinterpret_cast<const uint16_t *>(raw);
+                }
+                else
+                {
+                    SDL_LogWarn(0, "Unsupported JOINTS_0 component type: %d", jAccessor.componentType);
+                    hasJoints = false;
+                }
+
+                if (jView.byteStride)
+                    jointsStrideBytes = jView.byteStride;
+                else
+                {
+                    int compSize = (jAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+                                       ? sizeof(uint16_t)
+                                       : sizeof(uint8_t);
+                    jointsStrideBytes = 4 * compSize; // VEC4
+                }
+            }
+
+            // --- Weights (WEIGHTS_0) ---
+            bool hasWeights = prim.attributes.find("WEIGHTS_0") != prim.attributes.end();
+            const float *weightsF = nullptr;
+            const uint8_t *weights8 = nullptr;
+            const uint16_t *weights16 = nullptr;
+            int weightsStrideBytes = 0;
+            int weightsComponentType = 0;
+
+            if (hasWeights)
+            {
+                const auto &wAccessor = model.accessors[prim.attributes.at("WEIGHTS_0")];
+                const auto &wView = model.bufferViews[wAccessor.bufferView];
+                const auto &wBuffer = model.buffers[wView.buffer];
+
+                const uint8_t *raw = &wBuffer.data[wView.byteOffset + wAccessor.byteOffset];
+                weightsComponentType = wAccessor.componentType;
+
+                if (wAccessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT)
+                {
+                    weightsF = reinterpret_cast<const float *>(raw);
+                }
+                else if (wAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE)
+                {
+                    weights8 = raw;
+                }
+                else if (wAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+                {
+                    weights16 = reinterpret_cast<const uint16_t *>(raw);
+                }
+                else
+                {
+                    SDL_LogWarn(0, "Unsupported WEIGHTS_0 component type: %d", wAccessor.componentType);
+                    hasWeights = false;
+                }
+
+                if (wView.byteStride)
+                    weightsStrideBytes = wView.byteStride;
+                else
+                {
+                    int compSize = 0;
+                    if (wAccessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT)
+                        compSize = sizeof(float);
+                    else if (wAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+                        compSize = sizeof(uint16_t);
+                    else
+                        compSize = sizeof(uint8_t);
+                    weightsStrideBytes = 4 * compSize; // VEC4
+                }
+            }
+
             // Build vertex data
             primData.vertices.resize(posAccessor.count);
+
+            // Init AABB
+            primData.aabbMin = glm::vec3(std::numeric_limits<float>::max());
+            primData.aabbMax = glm::vec3(std::numeric_limits<float>::lowest());
+
             for (size_t i = 0; i < posAccessor.count; ++i)
             {
-                primData.vertices[i].position = glm::make_vec3(positions + i * posStride);
-                primData.vertices[i].normal = hasNormal ? glm::make_vec3(normals + i * normStride) : glm::vec3(0.0f, 1.0f, 0.0f);
-                primData.vertices[i].uv = hasUV ? glm::make_vec2(uvs + i * uvStride) : glm::vec2(0.0f, 0.0f);
-                primData.vertices[i].tangent = hasTangent ? glm::make_vec4(tangents + i * tangentStride) : glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+                Vertex &v = primData.vertices[i];
+
+                // Position / normal / uv / tangent
+                v.position = glm::make_vec3(positions + i * posStride);
+                v.normal = hasNormal ? glm::make_vec3(normals + i * normStride) : glm::vec3(0.0f, 1.0f, 0.0f);
+                v.uv = hasUV ? glm::make_vec2(uvs + i * uvStride) : glm::vec2(0.0f, 0.0f);
+                v.tangent = hasTangent ? glm::make_vec4(tangents + i * tangentStride) : glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+
+                // --- JOINTS_0 -> v.joints ---
+                v.joints = glm::uvec4(0);
+
+                if (hasJoints)
+                {
+                    if (jointsComponentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE)
+                    {
+                        const uint8_t *src = joints8 + i * jointsStrideBytes;
+                        v.joints = glm::uvec4(src[0], src[1], src[2], src[3]);
+                    }
+                    else if (jointsComponentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+                    {
+                        const uint8_t *jointBytes = reinterpret_cast<const uint8_t *>(joints16);
+                        const uint16_t *src = reinterpret_cast<const uint16_t *>(jointBytes + i * jointsStrideBytes);
+                        v.joints = glm::uvec4(src[0], src[1], src[2], src[3]);
+                    }
+                }
+
+                // --- WEIGHTS_0 -> v.weights ---
+                v.weights = glm::vec4(0.0f);
+
+                if (hasWeights)
+                {
+                    glm::vec4 w(0.0f);
+
+                    if (weightsComponentType == TINYGLTF_COMPONENT_TYPE_FLOAT)
+                    {
+                        const float *src = reinterpret_cast<const float *>(
+                            reinterpret_cast<const uint8_t *>(weightsF) + i * weightsStrideBytes);
+                        w = glm::vec4(src[0], src[1], src[2], src[3]);
+                    }
+                    else if (weightsComponentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE)
+                    {
+                        const uint8_t *src = weights8 + i * weightsStrideBytes;
+                        w = glm::vec4(src[0] / 255.0f, src[1] / 255.0f, src[2] / 255.0f, src[3] / 255.0f);
+                    }
+                    else if (weightsComponentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+                    {
+                        const uint8_t *weightBytes = reinterpret_cast<const uint8_t *>(weightsF);
+                        const float *src = reinterpret_cast<const float *>(weightBytes + i * weightsStrideBytes);
+                        w = glm::vec4(src[0] / 65535.0f, src[1] / 65535.0f, src[2] / 65535.0f, src[3] / 65535.0f);
+                    }
+
+                    // Normalize just in case
+                    float sum = w.x + w.y + w.z + w.w;
+                    if (sum > 0.0f)
+                        w /= sum;
+
+                    v.weights = w;
+                }
 
                 const glm::vec3 &p = primData.vertices[i].position;
                 primData.aabbMin = glm::min(primData.aabbMin, p);
@@ -556,6 +709,14 @@ ModelData *ResourceManager::loadModel(const std::string &path)
         }
 
         modelData->meshes.push_back(meshData);
+    }
+
+    // Load animations
+    for (int i = 0; i < model.animations.size(); i++)
+    {
+        // TODO: skin index
+        Animation *animation = new Animation(model, i, 0);
+        modelData->animations.push_back(animation);
     }
 
     // --- 5. Finalize Copy Pass ---

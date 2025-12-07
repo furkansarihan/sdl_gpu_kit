@@ -40,6 +40,11 @@ RenderManager::~RenderManager()
         SDL_ReleaseGPUGraphicsPipeline(m_device, m_pbrPipeline);
     if (m_pbrDoubleSided)
         SDL_ReleaseGPUGraphicsPipeline(m_device, m_pbrDoubleSided);
+    if (m_pbrWireframePipeline)
+        SDL_ReleaseGPUGraphicsPipeline(m_device, m_pbrWireframePipeline);
+    if (m_pbrAnimation)
+        SDL_ReleaseGPUGraphicsPipeline(m_device, m_pbrAnimation);
+
     if (m_baseSampler)
         SDL_ReleaseGPUSampler(m_device, m_baseSampler);
     if (m_defaultTexture)
@@ -91,6 +96,8 @@ void RenderManager::updateResources(glm::ivec2 screenSize, SDL_GPUSampleCount sa
     {
         SDL_ReleaseGPUGraphicsPipeline(m_device, m_pbrPipeline);
         SDL_ReleaseGPUGraphicsPipeline(m_device, m_pbrDoubleSided);
+        SDL_ReleaseGPUGraphicsPipeline(m_device, m_pbrWireframePipeline);
+        SDL_ReleaseGPUGraphicsPipeline(m_device, m_pbrAnimation);
         createPipeline(sampleCount);
     }
 
@@ -256,6 +263,33 @@ void RenderManager::createPipeline(SDL_GPUSampleCount sampleCount)
         return;
     }
 
+    //
+    SDL_GPUShader *vertexAnimShader = Utils::loadShader("src/shaders/pbr_skinned.vert", 0, 2, SDL_GPU_SHADERSTAGE_VERTEX);
+
+    pipelineInfo.vertex_shader = vertexAnimShader;
+    pipelineInfo.fragment_shader = fragmentShader;
+    pipelineInfo.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+
+    pipelineInfo.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+    pipelineInfo.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_BACK;
+
+    SDL_GPUVertexAttribute vertexAnimAttributes[6]{};
+    vertexAnimAttributes[0] = {0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(Vertex, position)};
+    vertexAnimAttributes[1] = {1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(Vertex, normal)};
+    vertexAnimAttributes[2] = {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(Vertex, uv)};
+    vertexAnimAttributes[3] = {3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, offsetof(Vertex, tangent)};
+    vertexAnimAttributes[4] = {4, 0, SDL_GPU_VERTEXELEMENTFORMAT_UINT4, offsetof(Vertex, joints)};
+    vertexAnimAttributes[5] = {5, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, offsetof(Vertex, weights)};
+    pipelineInfo.vertex_input_state.num_vertex_attributes = 6;
+    pipelineInfo.vertex_input_state.vertex_attributes = vertexAnimAttributes;
+
+    m_pbrAnimation = SDL_CreateGPUGraphicsPipeline(m_device, &pipelineInfo);
+    if (m_pbrAnimation == nullptr)
+    {
+        SDL_Log("Failed to create m_pbrAnimation: %s", SDL_GetError());
+        return;
+    }
+
     SDL_ReleaseGPUShader(m_device, fragmentShader);
 
     // --- 2. OIT Geometry Pipeline ---
@@ -354,16 +388,6 @@ void RenderManager::createPipeline(SDL_GPUSampleCount sampleCount)
     SDL_ReleaseGPUShader(m_device, oitCompositeShader);
 }
 
-void RenderManager::renderShadow(SDL_GPUCommandBuffer *cmd, SDL_GPURenderPass *pass, const glm::mat4 &viewProj)
-{
-    Frustum frustum = Frustum::fromMatrix(viewProj);
-
-    for (Renderable *r : m_renderables)
-    {
-        r->renderShadow(cmd, pass, viewProj, frustum);
-    }
-}
-
 void RenderManager::renderOpaque(
     SDL_GPUCommandBuffer *cmd,
     SDL_GPURenderPass *pass,
@@ -390,6 +414,16 @@ void RenderManager::renderOpaque(
 
     for (Renderable *r : m_renderables)
         r->renderOpaqueDoubleSided(cmd, pass, view, projection, frustum);
+
+    // ---
+
+    SDL_BindGPUGraphicsPipeline(pass, m_pbrAnimation);
+
+    SDL_PushGPUFragmentUniformData(cmd, 0, &m_fragmentUniforms, sizeof(FragmentUniforms));
+    SDL_PushGPUFragmentUniformData(cmd, 2, &m_shadowManager->m_shadowUniforms, sizeof(ShadowUniforms));
+
+    for (Renderable *r : m_renderables)
+        r->renderAnimation(cmd, pass, view, projection, frustum);
 }
 
 void RenderManager::renderTransparent(

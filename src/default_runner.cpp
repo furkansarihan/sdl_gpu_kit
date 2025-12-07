@@ -30,6 +30,13 @@
 #include "shadow_manager/shadow_manager.h"
 #include "update_manager/update_manager.h"
 
+RootUI *DefaultRunner::m_rootUI = nullptr;
+ResourceManager *DefaultRunner::m_resourceManager = nullptr;
+RenderManager *DefaultRunner::m_renderManager = nullptr;
+PostProcess *DefaultRunner::m_postProcess = nullptr;
+UpdateManager *DefaultRunner::m_updateManager = nullptr;
+Camera *DefaultRunner::m_camera = nullptr;
+
 DefaultRunner::DefaultRunner(glm::ivec2 windowSize)
     : m_initWindowSize(windowSize)
 {
@@ -48,7 +55,7 @@ DefaultRunner::~DefaultRunner()
 
 void DefaultRunner::UpdateCamera(float dt)
 {
-    float velocity = m_camera.speed * dt;
+    float velocity = m_camera->speed * dt;
 
     if (m_keys[SDL_SCANCODE_LSHIFT])
         velocity *= 0.2f;
@@ -57,16 +64,16 @@ void DefaultRunner::UpdateCamera(float dt)
 
     glm::vec3 direction(0.f);
     if (m_keys[SDL_SCANCODE_W])
-        direction += m_camera.front;
+        direction += m_camera->front;
     if (m_keys[SDL_SCANCODE_S])
-        direction -= m_camera.front;
+        direction -= m_camera->front;
     if (m_keys[SDL_SCANCODE_A])
-        direction -= glm::normalize(glm::cross(m_camera.front, m_camera.up));
+        direction -= glm::normalize(glm::cross(m_camera->front, m_camera->up));
     if (m_keys[SDL_SCANCODE_D])
-        direction += glm::normalize(glm::cross(m_camera.front, m_camera.up));
+        direction += glm::normalize(glm::cross(m_camera->front, m_camera->up));
 
     if (glm::length2(direction) > 0.f)
-        m_camera.position += glm::normalize(direction) * velocity;
+        m_camera->position += glm::normalize(direction) * velocity;
 }
 
 SDL_AppResult DefaultRunner::Init(int argc, char **argv)
@@ -110,6 +117,7 @@ SDL_AppResult DefaultRunner::Init(int argc, char **argv)
     m_postProcess = new PostProcess(msaaSampleCount);
     m_postProcess->update(m_initWindowSize);
     m_updateManager = new UpdateManager();
+    m_camera = new Camera();
 
     // Setup ImGui
     IMGUI_CHECKVERSION();
@@ -149,8 +157,8 @@ SDL_AppResult DefaultRunner::Iterate()
     m_lastFrame = currentFrame;
 
     UpdateCamera(m_deltaTime);
-    m_camera.view = glm::lookAt(m_camera.position, m_camera.position + m_camera.front, m_camera.up);
-    m_camera.projection = glm::perspective(glm::radians(m_camera.fov), (float)m_width / (float)m_height, m_camera.near, m_camera.far);
+    m_camera->view = glm::lookAt(m_camera->position, m_camera->position + m_camera->front, m_camera->up);
+    m_camera->projection = glm::perspective(glm::radians(m_camera->fov), (float)m_width / (float)m_height, m_camera->near, m_camera->far);
     m_updateManager->update(m_deltaTime);
 
     SDL_GPUCommandBuffer *commandBuffer = SDL_AcquireGPUCommandBuffer(m_device);
@@ -168,13 +176,13 @@ SDL_AppResult DefaultRunner::Iterate()
     m_renderManager->updateResources({m_width, m_height}, m_postProcess->m_sampleCount);
 
     // Camera Matrices
-    const glm::mat4 &view = m_camera.view;
-    const glm::mat4 &projection = m_camera.projection;
-    m_renderManager->m_fragmentUniforms.viewPos = m_camera.position;
+    const glm::mat4 &view = m_camera->view;
+    const glm::mat4 &projection = m_camera->projection;
+    m_renderManager->m_fragmentUniforms.viewPos = m_camera->position;
 
     // --- Shadow Pass ---
     float aspect = static_cast<float>(m_width) / static_cast<float>(m_height);
-    m_renderManager->m_shadowManager->updateCascades(&m_camera, view, -m_renderManager->m_fragmentUniforms.lightDir, aspect);
+    m_renderManager->m_shadowManager->updateCascades(m_camera, view, -m_renderManager->m_fragmentUniforms.lightDir, aspect);
 
     ShadowManager *shadowManager = m_renderManager->m_shadowManager;
 
@@ -197,15 +205,30 @@ SDL_AppResult DefaultRunner::Iterate()
         colorTargetInfo.layer_or_depth_plane = cascadeIndex;
 
         SDL_GPURenderPass *shadowPass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, nullptr);
-        SDL_BindGPUGraphicsPipeline(shadowPass, shadowManager->m_shadowPipeline);
 
         const Cascade &cascade = shadowManager->m_cascades[cascadeIndex];
         const glm::mat4 &lightView = cascade.view;
         const glm::mat4 &lightProj = cascade.projection;
         const glm::mat4 lightViewProj = lightProj * lightView;
 
+        SDL_BindGPUGraphicsPipeline(shadowPass, shadowManager->m_shadowPipeline);
         SDL_SetGPUViewport(shadowPass, &viewport);
-        m_renderManager->renderShadow(commandBuffer, shadowPass, lightViewProj);
+
+        const Frustum frustum = Frustum::fromMatrix(lightViewProj);
+
+        for (Renderable *r : m_renderManager->m_renderables)
+        {
+            r->renderShadow(commandBuffer, shadowPass, lightViewProj, frustum);
+        }
+
+        SDL_BindGPUGraphicsPipeline(shadowPass, shadowManager->m_shadowAnimationPipeline);
+        SDL_SetGPUViewport(shadowPass, &viewport);
+
+        for (Renderable *r : m_renderManager->m_renderables)
+        {
+            r->renderAnimationShadow(commandBuffer, shadowPass, lightViewProj, frustum);
+        }
+
         SDL_EndGPURenderPass(shadowPass);
     }
 
@@ -234,7 +257,7 @@ SDL_AppResult DefaultRunner::Iterate()
 
     SDL_GPURenderPass *renderPass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, &depthInfo);
     m_renderManager->m_pbrManager->renderSkybox(commandBuffer, renderPass, view, projection);
-    m_renderManager->renderOpaque(commandBuffer, renderPass, view, projection, m_camera.position);
+    m_renderManager->renderOpaque(commandBuffer, renderPass, view, projection, m_camera->position);
     SDL_EndGPURenderPass(renderPass);
 
     m_postProcess->resolveDepth(commandBuffer);
@@ -257,7 +280,7 @@ SDL_AppResult DefaultRunner::Iterate()
     depthInfo.stencil_store_op = SDL_GPU_STOREOP_STORE;
 
     SDL_GPURenderPass *oitPass = SDL_BeginGPURenderPass(commandBuffer, oitTargets, 2, &depthInfo);
-    m_renderManager->renderTransparent(commandBuffer, oitPass, view, projection, m_camera.position);
+    m_renderManager->renderTransparent(commandBuffer, oitPass, view, projection, m_camera->position);
     SDL_EndGPURenderPass(oitPass);
 
     // Composite pass
@@ -269,7 +292,7 @@ SDL_AppResult DefaultRunner::Iterate()
     SDL_EndGPURenderPass(compPass);
 
     // Post Processing
-    m_postProcess->computeGTAO(commandBuffer, projection, view, m_camera.near, m_camera.far);
+    m_postProcess->computeGTAO(commandBuffer, projection, view, m_camera->near, m_camera->far);
     m_postProcess->downsample(commandBuffer);
     m_postProcess->upsample(commandBuffer);
     m_postProcess->runSMAA(commandBuffer);
@@ -301,22 +324,22 @@ SDL_AppResult DefaultRunner::ProcessEvent(SDL_Event *event)
 
     if (event->type == SDL_EVENT_MOUSE_MOTION && m_mouseButtons[SDL_BUTTON_RIGHT])
     {
-        float xoffset = event->motion.xrel * m_camera.sensitivity;
-        float yoffset = -event->motion.yrel * m_camera.sensitivity;
+        float xoffset = event->motion.xrel * m_camera->sensitivity;
+        float yoffset = -event->motion.yrel * m_camera->sensitivity;
 
-        m_camera.yaw += xoffset;
-        m_camera.pitch += yoffset;
+        m_camera->yaw += xoffset;
+        m_camera->pitch += yoffset;
 
-        if (m_camera.pitch > 89.0f)
-            m_camera.pitch = 89.0f;
-        if (m_camera.pitch < -89.0f)
-            m_camera.pitch = -89.0f;
+        if (m_camera->pitch > 89.0f)
+            m_camera->pitch = 89.0f;
+        if (m_camera->pitch < -89.0f)
+            m_camera->pitch = -89.0f;
 
         glm::vec3 direction;
-        direction.x = cos(glm::radians(m_camera.yaw)) * cos(glm::radians(m_camera.pitch));
-        direction.y = sin(glm::radians(m_camera.pitch));
-        direction.z = sin(glm::radians(m_camera.yaw)) * cos(glm::radians(m_camera.pitch));
-        m_camera.front = glm::normalize(direction);
+        direction.x = cos(glm::radians(m_camera->yaw)) * cos(glm::radians(m_camera->pitch));
+        direction.y = sin(glm::radians(m_camera->pitch));
+        direction.z = sin(glm::radians(m_camera->yaw)) * cos(glm::radians(m_camera->pitch));
+        m_camera->front = glm::normalize(direction);
     }
 
     if (event->type == SDL_EVENT_KEY_DOWN && event->key.scancode == SDL_SCANCODE_ESCAPE)
