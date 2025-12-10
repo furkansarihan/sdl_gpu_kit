@@ -1,5 +1,19 @@
 #include "input_manager.h"
 #include <SDL3/SDL_scancode.h>
+#include <algorithm>
+
+InputManager::~InputManager()
+{
+    // Close all gamepads
+    for (auto &pair : gamepads)
+    {
+        if (pair.second)
+        {
+            SDL_CloseGamepad(pair.second);
+        }
+    }
+    gamepads.clear();
+}
 
 void InputManager::addListener(InputListener *listener)
 {
@@ -64,6 +78,28 @@ void InputManager::processEvent(const SDL_Event &event)
         notifyMouseWheel(static_cast<int>(event.wheel.x),
                          static_cast<int>(event.wheel.y));
         break;
+
+    case SDL_EVENT_GAMEPAD_ADDED:
+        openGamepad(event.gdevice.which);
+        notifyGamepadConnected(event.gdevice.which);
+        break;
+
+    case SDL_EVENT_GAMEPAD_REMOVED:
+        notifyGamepadDisconnected(event.gdevice.which);
+        closeGamepad(event.gdevice.which);
+        break;
+
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        notifyGamepadButtonPressed(event.gbutton.which, event.gbutton.button);
+        break;
+
+    case SDL_EVENT_GAMEPAD_BUTTON_UP:
+        notifyGamepadButtonReleased(event.gbutton.which, event.gbutton.button);
+        break;
+
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+        notifyGamepadAxisMoved(event.gaxis.which, event.gaxis.axis, event.gaxis.value);
+        break;
     }
 }
 
@@ -82,6 +118,68 @@ void InputManager::getMousePosition(int &x, int &y) const
 {
     x = mouseX;
     y = mouseY;
+}
+
+bool InputManager::isGamepadConnected(SDL_JoystickID id) const
+{
+    return gamepads.find(id) != gamepads.end();
+}
+
+bool InputManager::isGamepadButtonDown(SDL_JoystickID id, Uint8 button) const
+{
+    auto it = gamepads.find(id);
+    if (it != gamepads.end() && it->second)
+    {
+        return SDL_GetGamepadButton(it->second, static_cast<SDL_GamepadButton>(button));
+    }
+    return false;
+}
+
+Sint16 InputManager::getGamepadAxis(SDL_JoystickID id, Uint8 axis) const
+{
+    auto it = gamepads.find(id);
+    if (it != gamepads.end() && it->second)
+    {
+        return SDL_GetGamepadAxis(it->second, static_cast<SDL_GamepadAxis>(axis));
+    }
+    return 0;
+}
+
+const std::vector<SDL_JoystickID> &InputManager::getConnectedGamepads() const
+{
+    return connectedGamepadIds;
+}
+
+void InputManager::openGamepad(SDL_JoystickID id)
+{
+    if (gamepads.find(id) == gamepads.end())
+    {
+        SDL_Gamepad *gamepad = SDL_OpenGamepad(id);
+        if (gamepad)
+        {
+            gamepads[id] = gamepad;
+            connectedGamepadIds.push_back(id);
+        }
+    }
+}
+
+void InputManager::closeGamepad(SDL_JoystickID id)
+{
+    auto it = gamepads.find(id);
+    if (it != gamepads.end())
+    {
+        if (it->second)
+        {
+            SDL_CloseGamepad(it->second);
+        }
+        gamepads.erase(it);
+
+        auto idIt = std::find(connectedGamepadIds.begin(), connectedGamepadIds.end(), id);
+        if (idIt != connectedGamepadIds.end())
+        {
+            connectedGamepadIds.erase(idIt);
+        }
+    }
 }
 
 void InputManager::notifyKeyPressed(SDL_Scancode key)
@@ -129,5 +227,45 @@ void InputManager::notifyMouseWheel(int dx, int dy)
     for (auto *listener : listeners)
     {
         listener->onMouseWheel(dx, dy);
+    }
+}
+
+void InputManager::notifyGamepadConnected(SDL_JoystickID id)
+{
+    for (auto *listener : listeners)
+    {
+        listener->onGamepadConnected(id);
+    }
+}
+
+void InputManager::notifyGamepadDisconnected(SDL_JoystickID id)
+{
+    for (auto *listener : listeners)
+    {
+        listener->onGamepadDisconnected(id);
+    }
+}
+
+void InputManager::notifyGamepadButtonPressed(SDL_JoystickID id, Uint8 button)
+{
+    for (auto *listener : listeners)
+    {
+        listener->onGamepadButtonPressed(id, button);
+    }
+}
+
+void InputManager::notifyGamepadButtonReleased(SDL_JoystickID id, Uint8 button)
+{
+    for (auto *listener : listeners)
+    {
+        listener->onGamepadButtonReleased(id, button);
+    }
+}
+
+void InputManager::notifyGamepadAxisMoved(SDL_JoystickID id, Uint8 axis, Sint16 value)
+{
+    for (auto *listener : listeners)
+    {
+        listener->onGamepadAxisMoved(id, axis, value);
     }
 }

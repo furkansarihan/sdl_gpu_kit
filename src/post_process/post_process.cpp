@@ -240,7 +240,6 @@ void PostProcess::renderUI()
     if (ImGui::Combo("Anti-Aliasing", &aaMode, aaItems, IM_ARRAYSIZE(aaItems)))
         setAntiAliasingMode((AntiAliasingMode)aaMode);
 
-    if (ImGui::TreeNode("MSAA"))
     {
         const char *msaaOptions[] = {"1x", "2x", "4x", "8x"};
         SDL_GPUSampleCount msaaValues[] = {
@@ -266,7 +265,7 @@ void PostProcess::renderUI()
             break;
         }
 
-        if (ImGui::BeginCombo("Sample Count", msaaOptions[currentIndex]))
+        if (ImGui::BeginCombo("MSAA", msaaOptions[currentIndex]))
         {
             for (int i = 0; i < 4; i++)
             {
@@ -291,7 +290,6 @@ void PostProcess::renderUI()
             }
             ImGui::EndCombo();
         }
-        ImGui::TreePop();
     }
 
     if (ImGui::TreeNode("Tone Mapping"))

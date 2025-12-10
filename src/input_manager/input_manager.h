@@ -1,6 +1,9 @@
 #pragma once
-#include <SDL3/SDL.h>
+
+#include <unordered_map>
 #include <vector>
+
+#include <SDL3/SDL.h>
 
 // Base class for input listeners
 class InputListener
@@ -13,6 +16,13 @@ public:
     virtual void onMouseButtonReleased(Uint8 button, int x, int y) {};
     virtual void onMouseMoved(int x, int y, int dx, int dy) {};
     virtual void onMouseWheel(int dx, int dy) {};
+
+    // Gamepad events
+    virtual void onGamepadConnected(SDL_JoystickID id) {};
+    virtual void onGamepadDisconnected(SDL_JoystickID id) {};
+    virtual void onGamepadButtonPressed(SDL_JoystickID id, Uint8 button) {};
+    virtual void onGamepadButtonReleased(SDL_JoystickID id, Uint8 button) {};
+    virtual void onGamepadAxisMoved(SDL_JoystickID id, Uint8 axis, Sint16 value) {};
 };
 
 class InputManager
@@ -42,15 +52,28 @@ public:
     bool isMouseButtonDown(Uint8 button) const;
     void getMousePosition(int &x, int &y) const;
 
+    // Gamepad queries
+    bool isGamepadConnected(SDL_JoystickID id) const;
+    bool isGamepadButtonDown(SDL_JoystickID id, Uint8 button) const;
+    Sint16 getGamepadAxis(SDL_JoystickID id, Uint8 axis) const;
+    const std::vector<SDL_JoystickID> &getConnectedGamepads() const;
+
 private:
     // Private constructor for singleton
     InputManager() = default;
-    ~InputManager() = default;
+    ~InputManager();
 
     std::vector<InputListener *> listeners;
     const bool *keyboardState = nullptr;
     int mouseX = 0;
     int mouseY = 0;
+
+    // Gamepad tracking
+    std::unordered_map<SDL_JoystickID, SDL_Gamepad *> gamepads;
+    std::vector<SDL_JoystickID> connectedGamepadIds;
+
+    void openGamepad(SDL_JoystickID id);
+    void closeGamepad(SDL_JoystickID id);
 
     void notifyKeyPressed(SDL_Scancode key);
     void notifyKeyReleased(SDL_Scancode key);
@@ -58,4 +81,10 @@ private:
     void notifyMouseButtonReleased(Uint8 button, int x, int y);
     void notifyMouseMoved(int x, int y, int dx, int dy);
     void notifyMouseWheel(int dx, int dy);
+
+    void notifyGamepadConnected(SDL_JoystickID id);
+    void notifyGamepadDisconnected(SDL_JoystickID id);
+    void notifyGamepadButtonPressed(SDL_JoystickID id, Uint8 button);
+    void notifyGamepadButtonReleased(SDL_JoystickID id, Uint8 button);
+    void notifyGamepadAxisMoved(SDL_JoystickID id, Uint8 axis, Sint16 value);
 };
