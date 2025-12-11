@@ -142,13 +142,15 @@ void main()
         N = -N;
     }
 
+    N = normalize(N);
+
     // TODO: 
     vec3 L = normalize(-ubo.lightDir);
     float NdotL = max(dot(N, L), 0.0);
 
     float visibility = 1.0;
     if (NdotL > 0.0) {
-        visibility = shadow(fragPos, fragNormal, ubo.viewPos, ubo.lightDir, 2u);
+        visibility = shadow(fragPos, N, ubo.viewPos, ubo.lightDir, 2u);
     }
 
     // debug cascade
