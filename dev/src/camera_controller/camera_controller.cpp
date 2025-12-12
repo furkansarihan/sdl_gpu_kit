@@ -36,7 +36,7 @@ void CameraController::onKeyPressed(SDL_Scancode key)
     }
 }
 
-void CameraController::onMouseMoved(int x, int y, int dx, int dy)
+void CameraController::onMouseMoved(int x, int y, float dx, float dy)
 {
     if (!InputManager::getInstance().isMouseButtonDown(SDL_BUTTON_RIGHT))
         return;

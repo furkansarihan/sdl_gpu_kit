@@ -14,8 +14,8 @@ public:
     virtual void onKeyReleased(SDL_Scancode key) {};
     virtual void onMouseButtonPressed(Uint8 button, int x, int y) {};
     virtual void onMouseButtonReleased(Uint8 button, int x, int y) {};
-    virtual void onMouseMoved(int x, int y, int dx, int dy) {};
-    virtual void onMouseWheel(int dx, int dy) {};
+    virtual void onMouseMoved(int x, int y, float dx, float dy) {};
+    virtual void onMouseWheel(float dx, float dy) {};
 
     // Gamepad events
     virtual void onGamepadConnected(SDL_JoystickID id) {};
@@ -79,8 +79,8 @@ private:
     void notifyKeyReleased(SDL_Scancode key);
     void notifyMouseButtonPressed(Uint8 button, int x, int y);
     void notifyMouseButtonReleased(Uint8 button, int x, int y);
-    void notifyMouseMoved(int x, int y, int dx, int dy);
-    void notifyMouseWheel(int dx, int dy);
+    void notifyMouseMoved(int x, int y, float dx, float dy);
+    void notifyMouseWheel(float dx, float dy);
 
     void notifyGamepadConnected(SDL_JoystickID id);
     void notifyGamepadDisconnected(SDL_JoystickID id);

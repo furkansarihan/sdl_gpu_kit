@@ -69,14 +69,11 @@ void InputManager::processEvent(const SDL_Event &event)
     case SDL_EVENT_MOUSE_MOTION:
         mouseX = static_cast<int>(event.motion.x);
         mouseY = static_cast<int>(event.motion.y);
-        notifyMouseMoved(mouseX, mouseY,
-                         static_cast<int>(event.motion.xrel),
-                         static_cast<int>(event.motion.yrel));
+        notifyMouseMoved(mouseX, mouseY, event.motion.xrel, event.motion.yrel);
         break;
 
     case SDL_EVENT_MOUSE_WHEEL:
-        notifyMouseWheel(static_cast<int>(event.wheel.x),
-                         static_cast<int>(event.wheel.y));
+        notifyMouseWheel(event.wheel.x, event.wheel.y);
         break;
 
     case SDL_EVENT_GAMEPAD_ADDED:
@@ -214,7 +211,7 @@ void InputManager::notifyMouseButtonReleased(Uint8 button, int x, int y)
     }
 }
 
-void InputManager::notifyMouseMoved(int x, int y, int dx, int dy)
+void InputManager::notifyMouseMoved(int x, int y, float dx, float dy)
 {
     for (auto *listener : listeners)
     {
@@ -222,7 +219,7 @@ void InputManager::notifyMouseMoved(int x, int y, int dx, int dy)
     }
 }
 
-void InputManager::notifyMouseWheel(int dx, int dy)
+void InputManager::notifyMouseWheel(float dx, float dy)
 {
     for (auto *listener : listeners)
     {

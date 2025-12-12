@@ -29,7 +29,7 @@ public:
     void renderUI() override;
 
     void onKeyPressed(SDL_Scancode key) override;
-    void onMouseMoved(int x, int y, int dx, int dy) override;
+    void onMouseMoved(int x, int y, float dx, float dy) override;
 
     void update(float deltaTime) override;
 };
