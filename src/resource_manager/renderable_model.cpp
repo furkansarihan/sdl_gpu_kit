@@ -20,6 +20,7 @@ bool PrimitiveInFrustum(const PrimitiveData &prim, const glm::mat4 &worldTransfo
 void RenderableModel::renderPrimitive(
     const PrimitiveData &prim,
     const glm::mat4 &model,
+    const glm::mat4 &cullModel,
     bool blend,
     bool checkDoubleSide,
     bool doubleSide,
@@ -39,7 +40,7 @@ void RenderableModel::renderPrimitive(
     if (!blend && mat->alphaMode == AlphaMode::Blend)
         return;
 
-    if (!PrimitiveInFrustum(prim, model, frustum))
+    if (!PrimitiveInFrustum(prim, cullModel, frustum))
         return;
 
     if (checkDoubleSide && mat->doubleSided != doubleSide)
@@ -108,10 +109,11 @@ void RenderableModel::renderModel(
 
         const MeshData &mesh = m_model->meshes[node.meshIndex];
         const glm::mat4 &world = m_animator ? m_animator->m_finalBoneMatrices[0] : node.worldTransform;
+        const glm::mat4 cullWorld = m_cullOffset * world;
 
         for (const auto &prim : mesh.primitives)
         {
-            renderPrimitive(prim, world, blend, checkDoubleSide, doubleSide, m_manager, cmd, pass, view, projection, frustum);
+            renderPrimitive(prim, world, cullWorld, blend, checkDoubleSide, doubleSide, m_manager, cmd, pass, view, projection, frustum);
         }
     }
 }
@@ -187,10 +189,11 @@ void RenderableModel::renderModelShadow(
             continue;
         const MeshData &mesh = m_model->meshes[node.meshIndex];
         const glm::mat4 &world = m_animator ? m_animator->m_finalBoneMatrices[0] : node.worldTransform;
+        const glm::mat4 cullWorld = m_cullOffset * world;
 
         for (const auto &prim : mesh.primitives)
         {
-            if (!PrimitiveInFrustum(prim, world, frustum))
+            if (!PrimitiveInFrustum(prim, cullWorld, frustum))
                 continue;
 
             shadowUniforms.model = world;

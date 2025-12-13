@@ -16,6 +16,7 @@ public:
     ModelData *m_model;
     RenderManager *m_manager;
     bool m_castingShadow;
+    glm::mat4 m_cullOffset{1.f};
 
     RenderableModel(ModelData *m, RenderManager *rm)
         : m_model(m),
@@ -29,6 +30,7 @@ public:
     static void renderPrimitive(
         const PrimitiveData &prim,
         const glm::mat4 &model,
+        const glm::mat4 &cullModel,
         bool blend,
         bool checkDoubleSide,
         bool doubleSide,
