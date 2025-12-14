@@ -11,6 +11,24 @@ PbrManager::PbrManager(ResourceManager *resourceManager)
     : m_resourceManager(resourceManager)
 {
     init();
+    createSkyboxPipelines(Utils::device);
+
+    m_sunUBO.cameraPos = glm::vec3(0.0f, 0.0f, 0.0f);
+    m_sunUBO.turbidity = 2.0f;                                    // 2-10, lower = clearer sky
+    m_sunUBO.rayleigh = 1.0f;                                     // Molecular scattering intensity
+    m_sunUBO.mieCoefficient = 0.005f;                             // Aerosol scattering intensity
+    m_sunUBO.mieDirectionalG = 0.8f;                              // Anisotropy of aerosol scattering
+    m_sunUBO.sunIntensityFactor = 200.0f;                         // Sun brightness multiplier
+    m_sunUBO.sunIntensityFalloffSteepness = 1.5f;                 // How quickly sun fades at horizon
+    m_sunUBO.sunAngularDiameterDegrees = 0.00933f;                // Sun size in radians (~0.535 degrees)
+    m_sunUBO.rayleighZenithLength = 8400.0f;                      // Rayleigh scattering path length
+    m_sunUBO.mieZenithLength = 1250.0f;                           // Mie scattering path length
+    m_sunUBO.mieV = 4.0f;                                         // Mie scattering exponent
+    m_sunUBO.numMolecules = 2.545e25f;                            // Number of molecules per unit volume
+    m_sunUBO.refractiveIndex = 1.00029f;                          // Refractive index of air
+    m_sunUBO.depolarizationFactor = 0.035f;                       // Depolarization factor
+    m_sunUBO.primaries = glm::vec3(680e-9f, 550e-9f, 450e-9f);    // RGB wavelengths in meters
+    m_sunUBO.mieKCoefficient = glm::vec3(0.686f, 0.678f, 0.666f); // Mie scattering coefficients
 }
 
 PbrManager::~PbrManager()
@@ -21,6 +39,7 @@ PbrManager::~PbrManager()
     SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_irradiancePipeline);
     SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_prefilterPipeline);
     SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_skyboxPipeline);
+    SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_proceduralSkyboxPipeline);
 
     SDL_ReleaseGPUTexture(Utils::device, m_brdfTexture);
     SDL_ReleaseGPUTexture(Utils::device, m_cubemapTexture);
@@ -90,7 +109,7 @@ SDL_GPUGraphicsPipeline *CreatePbrPipeline(
     return SDL_CreateGPUGraphicsPipeline(device, &pipelineInfo);
 }
 
-SDL_GPUGraphicsPipeline *CreateSkyboxPipeline(SDL_GPUDevice *device)
+void PbrManager::createSkyboxPipelines(SDL_GPUDevice *device)
 {
     // Load shaders
     SDL_GPUShader *skyboxVertShader = Utils::loadShader("src/shaders/cube.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
@@ -171,13 +190,17 @@ SDL_GPUGraphicsPipeline *CreateSkyboxPipeline(SDL_GPUDevice *device)
     pipelineInfo.multisample_state = multisampleState;
     pipelineInfo.target_info = targetInfo;
 
-    SDL_GPUGraphicsPipeline *pipeline = SDL_CreateGPUGraphicsPipeline(device, &pipelineInfo);
+    m_skyboxPipeline = SDL_CreateGPUGraphicsPipeline(device, &pipelineInfo);
+
+    // Procedural skybox
+    SDL_GPUShader *skyboxSunFragShader = Utils::loadShader("src/shaders/skybox_procedural.frag", 0, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    pipelineInfo.fragment_shader = skyboxSunFragShader;
+    m_proceduralSkyboxPipeline = SDL_CreateGPUGraphicsPipeline(device, &pipelineInfo);
 
     // Release shaders
     SDL_ReleaseGPUShader(device, skyboxVertShader);
     SDL_ReleaseGPUShader(device, skyboxFragShader);
-
-    return pipeline;
+    SDL_ReleaseGPUShader(device, skyboxSunFragShader);
 }
 
 void PbrManager::init()
@@ -511,8 +534,6 @@ void PbrManager::updateEnvironmentTexture(Texture environmentTexture)
         SDL_WaitForGPUFences(Utils::device, true, &initFence, 1);
         SDL_ReleaseGPUFence(Utils::device, initFence);
     }
-
-    m_skyboxPipeline = CreateSkyboxPipeline(Utils::device);
 }
 
 void PbrManager::renderSkybox(
@@ -530,10 +551,17 @@ void PbrManager::renderSkybox(
 
     // Push uniforms
     SDL_PushGPUVertexUniformData(commandBuffer, 0, &vertUniforms, sizeof(vertUniforms));
-    SDL_PushGPUFragmentUniformData(commandBuffer, 0, &m_skyUBO, sizeof(m_skyUBO));
+
+    if (m_proceduralSkyEnabled)
+        SDL_PushGPUFragmentUniformData(commandBuffer, 0, &m_sunUBO, sizeof(m_sunUBO));
+    else
+        SDL_PushGPUFragmentUniformData(commandBuffer, 0, &m_skyUBO, sizeof(m_skyUBO));
 
     // Bind pipeline
-    SDL_BindGPUGraphicsPipeline(renderPass, m_skyboxPipeline);
+    if (m_proceduralSkyEnabled)
+        SDL_BindGPUGraphicsPipeline(renderPass, m_proceduralSkyboxPipeline);
+    else
+        SDL_BindGPUGraphicsPipeline(renderPass, m_skyboxPipeline);
 
     // Bind vertex buffer
     SDL_GPUBufferBinding vertexBinding{cubePrimitive.vertexBuffer, 0};

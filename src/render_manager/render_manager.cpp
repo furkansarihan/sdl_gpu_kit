@@ -77,6 +77,30 @@ void RenderManager::renderUI()
         ImGui::TreePop();
     }
 
+    ImGui::Checkbox("Procedural Sky Enabled", &m_pbrManager->m_proceduralSkyEnabled);
+    if (ImGui::TreeNode("Sky"))
+    {
+        ImGui::DragFloat("Turbidity", &m_pbrManager->m_sunUBO.turbidity, 0.01f, 1.0f, 20.0f);
+        ImGui::DragFloat("Rayleigh", &m_pbrManager->m_sunUBO.rayleigh, 0.01f, 0.0f, 10.0f);
+        ImGui::DragFloat("Mie Coefficient", &m_pbrManager->m_sunUBO.mieCoefficient, 0.0001f, 0.0f, 0.1f);
+        ImGui::DragFloat("Mie Directional G", &m_pbrManager->m_sunUBO.mieDirectionalG, 0.001f, 0.0f, 0.999f);
+        ImGui::DragFloat("Sun Intensity Factor", &m_pbrManager->m_sunUBO.sunIntensityFactor, 1.f, 0.0f, 2000.0f);
+        ImGui::DragFloat("Sun Intensity Falloff Steepness", &m_pbrManager->m_sunUBO.sunIntensityFalloffSteepness, 0.001f, 0.001f, 10.0f);
+        ImGui::DragFloat("Sun Angular Diameter Degrees", &m_pbrManager->m_sunUBO.sunAngularDiameterDegrees, 0.001f, 0.1f, 1.0f);
+        ImGui::DragFloat("Rayleigh Zenith Length", &m_pbrManager->m_sunUBO.rayleighZenithLength, 1.f, 0.f);
+        ImGui::DragFloat("Mie Zenith Length", &m_pbrManager->m_sunUBO.mieZenithLength, 1.1f, 0.0f);
+
+        ImGui::DragFloat("mieV", &m_pbrManager->m_sunUBO.mieV, 0.01f, 0.0f, 5.0f);
+        ImGui::DragFloat("Num Molecules", &m_pbrManager->m_sunUBO.numMolecules, 1e17f, 1e23f, 1e26f);
+        ImGui::DragFloat("Refractive Index", &m_pbrManager->m_sunUBO.refractiveIndex, 0.0001f, 1.0f, 1.1f);
+        ImGui::DragFloat("DepolarizationFactor", &m_pbrManager->m_sunUBO.depolarizationFactor, 0.001f, 0.0f, 1.0f);
+
+        ImGui::DragFloat3("Primaries", &m_pbrManager->m_sunUBO.primaries.x, 1.0f);
+        ImGui::DragFloat3("MieKCoefficient", &m_pbrManager->m_sunUBO.mieKCoefficient.x, 0.001f);
+
+        ImGui::TreePop();
+    }
+
     if (ImGui::TreeNode("Transparency Textures"))
     {
         ImGui::Text("Accumulate");

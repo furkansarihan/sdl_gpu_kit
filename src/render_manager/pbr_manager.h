@@ -24,6 +24,36 @@ struct SkyboxFragmentUBO
     float padding[3];
 };
 
+struct SunFragmentUBO
+{
+    glm::vec3 sunPosition;
+    float turbidity;
+
+    glm::vec3 cameraPos;
+    float rayleigh;
+
+    float mieCoefficient;
+    float mieDirectionalG;
+    float sunIntensityFactor;
+    float padding0;
+
+    float sunIntensityFalloffSteepness;
+    float sunAngularDiameterDegrees;
+    float rayleighZenithLength;
+    float mieZenithLength;
+
+    float mieV;
+    float numMolecules;
+    float refractiveIndex;
+    float depolarizationFactor;
+
+    glm::vec3 primaries;
+    float padding1;
+
+    glm::vec3 mieKCoefficient;
+    float padding2;
+};
+
 class PbrManager
 {
 public:
@@ -33,6 +63,8 @@ public:
     ResourceManager *m_resourceManager;
 
     SkyboxFragmentUBO m_skyUBO;
+    SunFragmentUBO m_sunUBO;
+    bool m_proceduralSkyEnabled = false;
     int m_prefilterMipLevels = 5;
     int m_prefilterSize = 128;
     int m_irradianceSize = 64;
@@ -47,6 +79,7 @@ public:
     SDL_GPUGraphicsPipeline *m_irradiancePipeline = nullptr;
     SDL_GPUGraphicsPipeline *m_prefilterPipeline = nullptr;
     SDL_GPUGraphicsPipeline *m_skyboxPipeline = nullptr;
+    SDL_GPUGraphicsPipeline *m_proceduralSkyboxPipeline = nullptr;
 
     // texture
     SDL_GPUTexture *m_brdfTexture = nullptr;
@@ -63,6 +96,7 @@ public:
     ModelData *m_quadModel;
     ModelData *m_cubeModel;
 
+    void createSkyboxPipelines(SDL_GPUDevice *device);
     void init();
     void updateEnvironmentTexture(Texture environmentTexture);
     void renderSkybox(
