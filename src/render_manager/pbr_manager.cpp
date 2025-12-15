@@ -12,6 +12,7 @@ PbrManager::PbrManager(ResourceManager *resourceManager)
 {
     init();
     createSkyboxPipelines(Utils::device);
+    createBRDFTexture();
 
     m_sunUBO.cameraPos = glm::vec3(0.0f, 0.0f, 0.0f);
     m_sunUBO.turbidity = 2.0f;                                    // 2-10, lower = clearer sky
@@ -310,54 +311,43 @@ void PbrManager::init()
     SDL_ReleaseGPUShader(Utils::device, brdfFrag);
 }
 
-void PbrManager::updateEnvironmentTexture(Texture environmentTexture)
+void PbrManager::createBRDFTexture()
 {
-    m_environmentTexture = environmentTexture;
+    SDL_GPUCommandBuffer *commandBuffer = SDL_AcquireGPUCommandBuffer(Utils::device);
 
+    SDL_GPUColorTargetInfo colorTargetInfo{};
+    colorTargetInfo.clear_color = {0.f, 0.f, 0.f, 1.0f};
+    colorTargetInfo.load_op = SDL_GPU_LOADOP_CLEAR;
+    colorTargetInfo.store_op = SDL_GPU_STOREOP_STORE;
+    colorTargetInfo.texture = m_brdfTexture;
+
+    SDL_GPURenderPass *renderPass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, nullptr);
+    if (!renderPass)
     {
-        SDL_GPUCommandBuffer *commandBuffer = SDL_AcquireGPUCommandBuffer(Utils::device);
-
-        SDL_GPUColorTargetInfo colorTargetInfo{};
-        colorTargetInfo.clear_color = {0.f, 0.f, 0.f, 1.0f};
-        colorTargetInfo.load_op = SDL_GPU_LOADOP_CLEAR;
-        colorTargetInfo.store_op = SDL_GPU_STOREOP_STORE;
-        colorTargetInfo.texture = m_brdfTexture;
-
-        SDL_GPURenderPass *renderPass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, nullptr);
-        if (!renderPass)
-        {
-            SDL_Log("Failed to begin render pass: %s", SDL_GetError());
-            return;
-        }
-
-        SDL_BindGPUGraphicsPipeline(renderPass, m_brdfPipeline);
-
-        const PrimitiveData &prim = m_quadModel->meshes[0].primitives[0];
-
-        SDL_GPUBufferBinding vertexBinding{prim.vertexBuffer, 0};
-        SDL_GPUBufferBinding indexBinding = {prim.indexBuffer, 0};
-
-        SDL_BindGPUVertexBuffers(renderPass, 0, &vertexBinding, 1);
-        SDL_BindGPUIndexBuffer(renderPass, &indexBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
-
-        SDL_DrawGPUIndexedPrimitives(renderPass, (Uint32)prim.indices.size(), 1, 0, 0, 0);
-
-        SDL_EndGPURenderPass(renderPass);
-
-        SDL_GPUFence *initFence = SDL_SubmitGPUCommandBufferAndAcquireFence(commandBuffer);
-        SDL_WaitForGPUFences(Utils::device, true, &initFence, 1);
-        SDL_ReleaseGPUFence(Utils::device, initFence);
+        SDL_Log("Failed to begin render pass: %s", SDL_GetError());
+        return;
     }
 
-    glm::mat4 m_captureViews[6] = {
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(-1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f)),
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
-    };
-    glm::mat4 m_captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
+    SDL_BindGPUGraphicsPipeline(renderPass, m_brdfPipeline);
+
+    const PrimitiveData &prim = m_quadModel->meshes[0].primitives[0];
+
+    SDL_GPUBufferBinding vertexBinding{prim.vertexBuffer, 0};
+    SDL_GPUBufferBinding indexBinding = {prim.indexBuffer, 0};
+
+    SDL_BindGPUVertexBuffers(renderPass, 0, &vertexBinding, 1);
+    SDL_BindGPUIndexBuffer(renderPass, &indexBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+
+    SDL_DrawGPUIndexedPrimitives(renderPass, (Uint32)prim.indices.size(), 1, 0, 0, 0);
+
+    SDL_EndGPURenderPass(renderPass);
+
+    SDL_SubmitGPUCommandBuffer(commandBuffer);
+}
+
+void PbrManager::updateEnvironmentTexture(SDL_GPUTexture *environmentTexture)
+{
+    m_environmentTexture = environmentTexture;
 
     // cubemap
     {
@@ -373,7 +363,7 @@ void PbrManager::updateEnvironmentTexture(Texture environmentTexture)
         SDL_GPUViewport viewport = {0, 0, (float)m_cubemapSize, (float)m_cubemapSize, 0.0f, 1.0f};
 
         // Bind the input HDR texture
-        SDL_GPUTextureSamplerBinding hdrBinding = {environmentTexture.id, m_hdrSampler};
+        SDL_GPUTextureSamplerBinding hdrBinding = {environmentTexture, m_hdrSampler};
 
         // Bind the cube mesh
         const PrimitiveData &prim = m_cubeModel->meshes[0].primitives[0];
@@ -408,11 +398,14 @@ void PbrManager::updateEnvironmentTexture(Texture environmentTexture)
 
         SDL_GenerateMipmapsForGPUTexture(cmdbuf, m_cubemapTexture);
 
-        SDL_GPUFence *initFence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmdbuf);
-        SDL_WaitForGPUFences(Utils::device, true, &initFence, 1);
-        SDL_ReleaseGPUFence(Utils::device, initFence);
+        SDL_SubmitGPUCommandBuffer(cmdbuf);
     }
 
+    updateIBL(m_cubemapTexture);
+}
+
+void PbrManager::updateIBL(SDL_GPUTexture *cubemapTexture)
+{
     // irradiance
     {
         SDL_GPUCommandBuffer *cmdbuf = SDL_AcquireGPUCommandBuffer(Utils::device);
@@ -426,7 +419,7 @@ void PbrManager::updateEnvironmentTexture(Texture environmentTexture)
 
         SDL_GPUViewport viewport = {0, 0, (float)m_irradianceSize, (float)m_irradianceSize, 0.0f, 1.0f};
 
-        SDL_GPUTextureSamplerBinding hdrBinding = {m_cubemapTexture, m_hdrSampler};
+        SDL_GPUTextureSamplerBinding hdrBinding = {cubemapTexture, m_hdrSampler};
 
         // Bind the cube mesh
         const PrimitiveData &prim = m_cubeModel->meshes[0].primitives[0];
@@ -461,9 +454,7 @@ void PbrManager::updateEnvironmentTexture(Texture environmentTexture)
 
         SDL_GenerateMipmapsForGPUTexture(cmdbuf, m_irradianceTexture);
 
-        SDL_GPUFence *initFence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmdbuf);
-        SDL_WaitForGPUFences(Utils::device, true, &initFence, 1);
-        SDL_ReleaseGPUFence(Utils::device, initFence);
+        SDL_SubmitGPUCommandBuffer(cmdbuf);
     }
 
     // prefilter
@@ -530,9 +521,7 @@ void PbrManager::updateEnvironmentTexture(Texture environmentTexture)
             }
         }
 
-        SDL_GPUFence *initFence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmdbuf);
-        SDL_WaitForGPUFences(Utils::device, true, &initFence, 1);
-        SDL_ReleaseGPUFence(Utils::device, initFence);
+        SDL_SubmitGPUCommandBuffer(cmdbuf);
     }
 }
 

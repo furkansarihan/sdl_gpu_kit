@@ -70,7 +70,7 @@ public:
     int m_irradianceSize = 64;
     int m_cubemapSize = 1024;
 
-    Texture m_environmentTexture;
+    SDL_GPUTexture *m_environmentTexture;
 
     // pipeline
     SDL_GPUGraphicsPipeline *m_graphicsPipeline = nullptr;
@@ -96,9 +96,21 @@ public:
     ModelData *m_quadModel;
     ModelData *m_cubeModel;
 
+    glm::mat4 m_captureViews[6] = {
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(-1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f)),
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
+    };
+    glm::mat4 m_captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
+
+    void createBRDFTexture();
     void createSkyboxPipelines(SDL_GPUDevice *device);
     void init();
-    void updateEnvironmentTexture(Texture environmentTexture);
+    void updateEnvironmentTexture(SDL_GPUTexture *environmentTexture);
+    void updateIBL(SDL_GPUTexture *cubemapTexture);
     void renderSkybox(
         SDL_GPUCommandBuffer *commandBuffer,
         SDL_GPURenderPass *renderPass,

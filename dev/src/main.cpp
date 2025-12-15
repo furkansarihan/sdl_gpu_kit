@@ -46,7 +46,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     params.dataType = TextureDataType::Float32;
     params.sample = true;
     g_hdrTexture = resourceManager->loadTextureFromFile(params, std::string(exePath + "/" + hdriPath));
-    renderManager->m_pbrManager->updateEnvironmentTexture(g_hdrTexture);
+    renderManager->m_pbrManager->updateEnvironmentTexture(g_hdrTexture.id);
 
     // load asset
     const char *modelPath = "assets/models/DamagedHelmet.glb";

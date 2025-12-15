@@ -95,7 +95,13 @@ void RenderManager::renderUI()
         ImGui::DragFloat("Refractive Index", &m_pbrManager->m_sunUBO.refractiveIndex, 0.0001f, 1.0f, 1.1f);
         ImGui::DragFloat("DepolarizationFactor", &m_pbrManager->m_sunUBO.depolarizationFactor, 0.001f, 0.0f, 1.0f);
 
-        ImGui::DragFloat3("Primaries", &m_pbrManager->m_sunUBO.primaries.x, 1.0f);
+        // The range for visible light is approx. 380 nm (Violet) to 750 nm (Far Red).
+        glm::vec3 primaries_nm = m_pbrManager->m_sunUBO.primaries * 1.0e9f;
+        ImGui::SliderFloat("Sun Wavelength - Red", &primaries_nm[0], 380.0f, 750.0f, "%.0f nm");
+        ImGui::SliderFloat("Sun Wavelength - Green", &primaries_nm[1], 380.0f, 750.0f, "%.0f nm");
+        ImGui::SliderFloat("Sun Wavelength - Blue", &primaries_nm[2], 380.0f, 750.0f, "%.0f nm");
+        m_pbrManager->m_sunUBO.primaries = primaries_nm * 1.0e-9f;
+
         ImGui::DragFloat3("MieKCoefficient", &m_pbrManager->m_sunUBO.mieKCoefficient.x, 0.001f);
 
         ImGui::TreePop();
