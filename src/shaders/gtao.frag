@@ -144,7 +144,7 @@ void groundTruthAmbientOcclusion(out float obscurance, vec2 uv, vec3 origin, vec
     float ssRadius = -(ubo.projectionScaleRadius / origin.z);
     
     // Safety to prevent divide by zero or crazy radii close to camera
-    ssRadius = clamp(ssRadius, 1.0, 1000.0); 
+    ssRadius = clamp(ssRadius, 1.0, 200.0); 
 
     float stepRadius = ssRadius / (ubo.stepsPerSlice + 1.0);
     
@@ -213,7 +213,7 @@ void main() {
     float depth = texture(depthTex, uv).r;
     
     // Standard OpenGL/Vulkan depth check
-    if (depth == 1.0) {
+    if (depth > 0.999) {
         outOcclusionAndDepth = vec2(1.0, 0.0);
         return;
     }
@@ -221,7 +221,7 @@ void main() {
     float linDepth = linearizeDepth(depth);
     vec3 origin = computeViewSpacePositionFromDepth(uv, linDepth, ubo.positionParams);
     vec3 normal = computeViewSpaceNormal(uv, depth, origin);
-    
+
     float occlusion = 0.0;
     if (ubo.intensity > 0.0) {
         groundTruthAmbientOcclusion(occlusion, uv, origin, normal);

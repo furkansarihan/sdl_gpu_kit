@@ -17,7 +17,7 @@ PostProcess::PostProcess(SDL_GPUSampleCount sampleCount)
 
     // Load GTAO Shaders (replaces SSAO)
     m_gtaoGenFrag = Utils::loadShader("src/shaders/gtao.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
-    m_gtaoBlurFrag = Utils::loadShader("src/shaders/ssao_blur.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    m_gtaoBlurFrag = Utils::loadShader("src/shaders/bilateral_blur.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
     m_depthCopyFrag = Utils::loadShader("src/shaders/depth_copy.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
     m_depthResolveFrag = Utils::loadShader("src/shaders/depth_resolve.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
@@ -185,9 +185,10 @@ PostProcess::PostProcess(SDL_GPUSampleCount sampleCount)
     m_downsampleUBO.highlight = 100.0f;
 
     {
+        m_gtaoResolutionFactor = 1.f;
         m_gtaoParams.intensity = 1.0f;
         m_gtaoParams.radius = 0.4f;
-        m_gtaoPower = 1.0f;
+        m_gtaoParams.power = 1.0f;
         m_gtaoParams.thicknessHeuristic = 0.0f;
         m_gtaoParams.constThickness = 0.1f;
         m_gtaoParams.sliceCount = glm::vec2(4.0f, 1.0f / 4.0f); // 4 slices
@@ -207,7 +208,8 @@ PostProcess::~PostProcess()
     SDL_ReleaseGPUTexture(Utils::device, m_colorTexture);
     SDL_ReleaseGPUTexture(Utils::device, m_depthTexture);
     SDL_ReleaseGPUTexture(Utils::device, m_gtaoRawTexture);
-    SDL_ReleaseGPUTexture(Utils::device, m_gtaoBlurTexture);
+    SDL_ReleaseGPUTexture(Utils::device, m_gtaoBlur0Texture);
+    SDL_ReleaseGPUTexture(Utils::device, m_gtaoBlur1Texture);
 
     for (int i = 0; i < BLOOM_MIPS; i++)
         SDL_ReleaseGPUTexture(Utils::device, m_bloomMip[i]);
@@ -234,6 +236,8 @@ void PostProcess::renderUI()
 {
     if (!ImGui::CollapsingHeader("Post Process", ImGuiTreeNodeFlags_DefaultOpen))
         return;
+
+    ImGui::Text("Screen Size: (%d, %d)", (int)m_UBO.screenSize.x, (int)m_UBO.screenSize.y);
 
     const char *aaItems[] = {"None", "FXAA", "SMAA"};
     int aaMode = m_aaMode;
@@ -327,9 +331,10 @@ void PostProcess::renderUI()
     if (ImGui::TreeNode("GTAO"))
     // if (ImGui::TreeNodeEx("GTAO", ImGuiTreeNodeFlags_DefaultOpen))
     {
+        ImGui::DragFloat("Resolution Factor", &m_gtaoResolutionFactor, 0.01f, 0.1f, 1.0f);
         ImGui::DragFloat("Intensity", &m_gtaoParams.intensity, 0.01f, 0.0f, 4.0f);
         ImGui::DragFloat("Radius", &m_gtaoParams.radius, 0.01f, 0.f, 5.0f);
-        ImGui::DragFloat("Power", &m_gtaoPower, 0.1f, 0.f, 10.0f);
+        ImGui::DragFloat("Power", &m_gtaoParams.power, 0.1f, 0.f, 10.0f);
 
         if (ImGui::TreeNode("Advanced"))
         {
@@ -345,14 +350,16 @@ void PostProcess::renderUI()
 
             ImGui::TreePop();
         }
+        
+        ImVec2 size(m_UBO.screenSize.x * 0.3f, m_UBO.screenSize.y * 0.3f);
 
         ImGui::Text("GTAO - Raw");
         if (m_gtaoRawTexture)
-            ImGui::Image((ImTextureID)(m_gtaoRawTexture), ImVec2(m_UBO.screenSize.x * 0.2f, m_UBO.screenSize.y * 0.2f));
+            ImGui::Image((ImTextureID)(m_gtaoRawTexture), size);
 
         ImGui::Text("GTAO - Blur");
-        if (m_gtaoBlurTexture)
-            ImGui::Image((ImTextureID)(m_gtaoBlurTexture), ImVec2(m_UBO.screenSize.x * 0.2f, m_UBO.screenSize.y * 0.2f));
+        if (m_gtaoBlur1Texture)
+            ImGui::Image((ImTextureID)(m_gtaoBlur1Texture), size);
 
         ImGui::TreePop();
     }
@@ -420,7 +427,11 @@ void PostProcess::update(glm::ivec2 screenSize)
 
     static Uint32 lastW = 0, lastH = 0;
     static SDL_GPUSampleCount lastSampleCount;
-    if (lastW != screenSize.x || lastH != screenSize.y || lastSampleCount != m_sampleCount)
+    static float lastGtaoResolution;
+    if (lastW != screenSize.x ||
+        lastH != screenSize.y ||
+        lastSampleCount != m_sampleCount ||
+        lastGtaoResolution != m_gtaoResolutionFactor)
     {
         if (m_msaaColorTexture)
             SDL_ReleaseGPUTexture(Utils::device, m_msaaColorTexture);
@@ -495,13 +506,16 @@ void PostProcess::update(glm::ivec2 screenSize)
 
         if (m_gtaoRawTexture)
             SDL_ReleaseGPUTexture(Utils::device, m_gtaoRawTexture);
-        if (m_gtaoBlurTexture)
-            SDL_ReleaseGPUTexture(Utils::device, m_gtaoBlurTexture);
+        if (m_gtaoBlur0Texture)
+            SDL_ReleaseGPUTexture(Utils::device, m_gtaoBlur0Texture);
+        if (m_gtaoBlur1Texture)
+            SDL_ReleaseGPUTexture(Utils::device, m_gtaoBlur1Texture);
 
         SDL_GPUTextureCreateInfo gtaoRawInfo{};
         gtaoRawInfo.format = SDL_GPU_TEXTUREFORMAT_R8G8_UNORM; // RG for visibility + packed depth
-        gtaoRawInfo.width = screenSize.x;
-        gtaoRawInfo.height = screenSize.y;
+        m_gtaoResolutionFactor = std::max(m_gtaoResolutionFactor, 0.1f);
+        gtaoRawInfo.width = screenSize.x * m_gtaoResolutionFactor;
+        gtaoRawInfo.height = screenSize.y * m_gtaoResolutionFactor;
         gtaoRawInfo.num_levels = 1;
         gtaoRawInfo.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
 
@@ -510,13 +524,13 @@ void PostProcess::update(glm::ivec2 screenSize)
 
         SDL_GPUTextureCreateInfo gtaoBlurInfo{};
         gtaoBlurInfo.format = SDL_GPU_TEXTUREFORMAT_R8_UNORM; // Just visibility
-        gtaoBlurInfo.width = screenSize.x;
-        gtaoBlurInfo.height = screenSize.y;
+        gtaoBlurInfo.width = screenSize.x * m_gtaoResolutionFactor;
+        gtaoBlurInfo.height = screenSize.y * m_gtaoResolutionFactor;
         gtaoBlurInfo.num_levels = 1;
         gtaoBlurInfo.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
 
-        m_gtaoBlurTexture = SDL_CreateGPUTexture(Utils::device, &gtaoBlurInfo);
-        SDL_SetGPUTextureName(Utils::device, m_gtaoBlurTexture, "GTAO Blur");
+        m_gtaoBlur0Texture = SDL_CreateGPUTexture(Utils::device, &gtaoBlurInfo);
+        m_gtaoBlur1Texture = SDL_CreateGPUTexture(Utils::device, &gtaoBlurInfo);
 
         // SMAA edge texture
         if (m_smaaEdgeTex)
@@ -562,6 +576,7 @@ void PostProcess::update(glm::ivec2 screenSize)
         lastW = screenSize.x;
         lastH = screenSize.y;
         lastSampleCount = m_sampleCount;
+        lastGtaoResolution = m_gtaoResolutionFactor;
     }
 }
 
@@ -659,10 +674,10 @@ void PostProcess::computeGTAO(
     glm::mat4 invProj = glm::inverse(projectionMatrix);
 
     m_gtaoParams.resolution = glm::vec4(
-        m_UBO.screenSize.x,
-        m_UBO.screenSize.y,
-        1.0f / m_UBO.screenSize.x,
-        1.0f / m_UBO.screenSize.y);
+        m_UBO.screenSize.x * m_gtaoResolutionFactor,
+        m_UBO.screenSize.y * m_gtaoResolutionFactor,
+        1.0f / (m_UBO.screenSize.x * m_gtaoResolutionFactor),
+        1.0f / (m_UBO.screenSize.y * m_gtaoResolutionFactor));
 
     m_gtaoParams.positionParams = glm::vec2(
         invProj[0][0],
@@ -670,16 +685,14 @@ void PostProcess::computeGTAO(
 
     m_gtaoParams.invFarPlane = 1.0f / farPlane;
 
-    // Calculate projection scale for screen-space radius
-    float fov = 2.0f * atan(1.0f / projectionMatrix[1][1]);
-    m_gtaoParams.projectionScale = m_UBO.screenSize.y / (2.0f * tan(fov * 0.5f));
+    // Estimate of the size in pixel units of a 1m tall/wide object viewed from 1m away (i.e. at z=-1)
+    m_gtaoParams.projectionScale = std::min(
+        0.5f * projectionMatrix[0].x * m_gtaoParams.resolution.x,
+        0.5f * projectionMatrix[1].y * m_gtaoParams.resolution.y);
 
     // Calculate derived values
     m_gtaoParams.invRadiusSquared = 1.0f / (m_gtaoParams.radius * m_gtaoParams.radius);
     m_gtaoParams.projectionScaleRadius = m_gtaoParams.projectionScale * m_gtaoParams.radius;
-
-    // Always square AO result, as it looks much better - they said
-    m_gtaoParams.power = m_gtaoPower * 2.0f;
 
     m_gtaoParams.nearPlane = nearPlane;
     m_gtaoParams.farPlane = farPlane;
@@ -705,23 +718,52 @@ void PostProcess::computeGTAO(
     }
     SDL_EndGPURenderPass(genPass);
 
-    // 2. GTAO Blur Pass
-    SDL_GPUColorTargetInfo blurTarget{};
-    blurTarget.texture = m_gtaoBlurTexture;
-    blurTarget.load_op = SDL_GPU_LOADOP_CLEAR;
-    blurTarget.store_op = SDL_GPU_STOREOP_STORE;
-
-    SDL_GPURenderPass *blurPass = SDL_BeginGPURenderPass(commandBuffer, &blurTarget, 1, nullptr);
+    struct BlurFragUBO
     {
-        SDL_BindGPUGraphicsPipeline(blurPass, m_gtaoBlurPipeline);
+        glm::vec2 invResolutionDirection;
+        float sharpness;
+        float padding0;
+    } ubo;
 
-        // Bind Raw GTAO (only need R channel for blur)
-        SDL_GPUTextureSamplerBinding input = {m_gtaoRawTexture, m_clampedSampler};
-        SDL_BindGPUFragmentSamplers(blurPass, 0, &input, 1);
+    // 2. GTAO Blur
 
-        SDL_DrawGPUPrimitives(blurPass, 3, 1, 0, 0);
+    // Pass 1: Horizontal blur (raw → blur temp)
+    SDL_GPUColorTargetInfo blurTarget1{};
+    blurTarget1.texture = m_gtaoBlur0Texture; // temp target
+    blurTarget1.load_op = SDL_GPU_LOADOP_CLEAR;
+    blurTarget1.store_op = SDL_GPU_STOREOP_STORE;
+    SDL_GPURenderPass *blurPass1 = SDL_BeginGPURenderPass(commandBuffer, &blurTarget1, 1, nullptr);
+    {
+        SDL_BindGPUGraphicsPipeline(blurPass1, m_gtaoBlurPipeline);
+        SDL_GPUTextureSamplerBinding input[1] = {{m_gtaoRawTexture, m_clampedSampler}};
+        SDL_BindGPUFragmentSamplers(blurPass1, 0, input, 1);
+
+        BlurFragUBO ubo;
+        ubo.sharpness = 40.f;
+        ubo.invResolutionDirection = glm::vec2(1.f / m_gtaoParams.resolution.x, 0.f);
+        SDL_PushGPUFragmentUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
+        SDL_DrawGPUPrimitives(blurPass1, 3, 1, 0, 0);
     }
-    SDL_EndGPURenderPass(blurPass);
+    SDL_EndGPURenderPass(blurPass1);
+
+    // Pass 2: Vertical blur (blur temp → final output)
+    SDL_GPUColorTargetInfo blurTarget2{};
+    blurTarget2.texture = m_gtaoBlur1Texture; // your final output texture
+    blurTarget2.load_op = SDL_GPU_LOADOP_CLEAR;
+    blurTarget2.store_op = SDL_GPU_STOREOP_STORE;
+    SDL_GPURenderPass *blurPass2 = SDL_BeginGPURenderPass(commandBuffer, &blurTarget2, 1, nullptr);
+    {
+        SDL_BindGPUGraphicsPipeline(blurPass2, m_gtaoBlurPipeline);
+        SDL_GPUTextureSamplerBinding input[1] = {{m_gtaoBlur0Texture, m_clampedSampler}};
+        SDL_BindGPUFragmentSamplers(blurPass2, 0, input, 1);
+
+        BlurFragUBO ubo;
+        ubo.sharpness = 40.f;
+        ubo.invResolutionDirection = glm::vec2(0.f, 1.f / m_gtaoParams.resolution.y);
+        SDL_PushGPUFragmentUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
+        SDL_DrawGPUPrimitives(blurPass2, 3, 1, 0, 0);
+    }
+    SDL_EndGPURenderPass(blurPass2);
 }
 
 void PostProcess::runSMAA(SDL_GPUCommandBuffer *cmd)
@@ -819,7 +861,7 @@ void PostProcess::postProcess(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTextur
             {
                 {color, Utils::baseSampler},
                 {m_bloomMip[0], Utils::baseSampler},
-                {m_gtaoBlurTexture, Utils::baseSampler},
+                {m_gtaoBlur1Texture, Utils::baseSampler},
             };
         SDL_BindGPUFragmentSamplers(finalPass, 0, inputs, 3);
 

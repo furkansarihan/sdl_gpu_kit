@@ -85,7 +85,7 @@ public:
     BloomDownsampleUBO m_downsampleUBO;
     BloomUpsampleUBO m_upsampleUBO;
     GTAOParamsUBO m_gtaoParams;
-    float m_gtaoPower;
+    float m_gtaoResolutionFactor;
 
     SDL_GPUSampleCount m_sampleCount;
 
@@ -98,7 +98,8 @@ public:
     SDL_GPUTexture *m_colorTexture = nullptr;
     SDL_GPUTexture *m_depthTexture = nullptr;
     SDL_GPUTexture *m_gtaoRawTexture = nullptr;  // Raw GTAO result (RG format)
-    SDL_GPUTexture *m_gtaoBlurTexture = nullptr; // Final blurred GTAO
+    SDL_GPUTexture *m_gtaoBlur0Texture = nullptr;
+    SDL_GPUTexture *m_gtaoBlur1Texture = nullptr; // Final blurred GTAO
 
     static const int BLOOM_MIPS = 5;
     SDL_GPUTexture *m_bloomMip[BLOOM_MIPS] = {};
