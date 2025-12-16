@@ -16,7 +16,7 @@ PostProcess::PostProcess(SDL_GPUSampleCount sampleCount)
     m_bloomUpFrag = Utils::loadShader("src/shaders/upsample.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
     // Load GTAO Shaders (replaces SSAO)
-    m_gtaoGenFrag = Utils::loadShader("src/shaders/gtao.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    m_gtaoGenFrag = Utils::loadShader("src/shaders/gtao.frag", 2, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
     m_gtaoBlurFrag = Utils::loadShader("src/shaders/bilateral_blur.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
     m_depthCopyFrag = Utils::loadShader("src/shaders/depth_copy.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
     m_depthResolveFrag = Utils::loadShader("src/shaders/depth_resolve.frag", 1, 0, SDL_GPU_SHADERSTAGE_FRAGMENT);
@@ -350,7 +350,7 @@ void PostProcess::renderUI()
 
             ImGui::TreePop();
         }
-        
+
         ImVec2 size(m_UBO.screenSize.x * 0.3f, m_UBO.screenSize.y * 0.3f);
 
         ImGui::Text("GTAO - Raw");
@@ -532,6 +532,21 @@ void PostProcess::update(glm::ivec2 screenSize)
         m_gtaoBlur0Texture = SDL_CreateGPUTexture(Utils::device, &gtaoBlurInfo);
         m_gtaoBlur1Texture = SDL_CreateGPUTexture(Utils::device, &gtaoBlurInfo);
 
+        if (m_gtaoMaskTexture)
+            SDL_ReleaseGPUTexture(Utils::device, m_gtaoMaskTexture);
+
+        // 1. Create the Texture
+        SDL_GPUTextureCreateInfo maskInfo{};
+        maskInfo.format = SDL_GPU_TEXTUREFORMAT_R8_UNORM; // Matches uint8_t data
+        maskInfo.width = ScreenMask64::GRID_WIDTH;
+        maskInfo.height = ScreenMask64::GRID_HEIGHT;
+        maskInfo.layer_count_or_depth = 1;
+        maskInfo.num_levels = 1;
+        maskInfo.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER; // We only read it in shader
+
+        m_gtaoMaskTexture = SDL_CreateGPUTexture(Utils::device, &maskInfo);
+        SDL_SetGPUTextureName(Utils::device, m_gtaoMaskTexture, "GTAO Mask");
+
         // SMAA edge texture
         if (m_smaaEdgeTex)
             SDL_ReleaseGPUTexture(Utils::device, m_smaaEdgeTex);
@@ -697,6 +712,49 @@ void PostProcess::computeGTAO(
     m_gtaoParams.nearPlane = nearPlane;
     m_gtaoParams.farPlane = farPlane;
 
+    // update mask texture
+    {
+        // 1. Create a Transfer Buffer (Staging buffer)
+        Uint32 dataSize = m_gtaoMask.getDataSize();
+
+        SDL_GPUTransferBufferCreateInfo transferInfo{};
+        transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        transferInfo.size = dataSize;
+
+        SDL_GPUTransferBuffer *transferBuffer = SDL_CreateGPUTransferBuffer(Utils::device, &transferInfo);
+
+        // 2. Map memory and copy CPU data
+        Uint8 *mapData = (Uint8 *)SDL_MapGPUTransferBuffer(Utils::device, transferBuffer, false);
+        if (mapData)
+        {
+            std::memcpy(mapData, m_gtaoMask.getData(), dataSize);
+            SDL_UnmapGPUTransferBuffer(Utils::device, transferBuffer);
+        }
+
+        // 3. Define the copy operation
+        SDL_GPUTextureTransferInfo source{};
+        source.transfer_buffer = transferBuffer;
+        source.offset = 0;
+        source.pixels_per_row = ScreenMask64::GRID_WIDTH;
+        source.rows_per_layer = ScreenMask64::GRID_HEIGHT;
+
+        SDL_GPUTextureRegion destination{};
+        destination.texture = m_gtaoMaskTexture;
+        destination.w = ScreenMask64::GRID_WIDTH;
+        destination.h = ScreenMask64::GRID_HEIGHT;
+        destination.d = 1;
+
+        // 4. Record the upload command
+        SDL_GPUCopyPass *copyPass = SDL_BeginGPUCopyPass(commandBuffer);
+        SDL_UploadToGPUTexture(copyPass, &source, &destination, false);
+        SDL_EndGPUCopyPass(copyPass);
+
+        // 5. Cleanup
+        // SDL3 tracks the buffer usage, so we can release the handle immediately
+        // and the driver will destroy it after the command buffer finishes.
+        SDL_ReleaseGPUTransferBuffer(Utils::device, transferBuffer);
+    }
+
     // 1. GTAO Generation Pass
     SDL_GPUColorTargetInfo genTarget{};
     genTarget.texture = m_gtaoRawTexture;
@@ -707,9 +765,11 @@ void PostProcess::computeGTAO(
     {
         SDL_BindGPUGraphicsPipeline(genPass, m_gtaoGenPipeline);
 
-        // Bind Depth texture
-        SDL_GPUTextureSamplerBinding depthBind = {m_depthTexture, m_clampedSampler};
-        SDL_BindGPUFragmentSamplers(genPass, 0, &depthBind, 1);
+        SDL_GPUTextureSamplerBinding textures[2] = {
+            {m_depthTexture, m_clampedSampler},
+            {m_gtaoMaskTexture, m_clampedSampler},
+        };
+        SDL_BindGPUFragmentSamplers(genPass, 0, textures, 2);
 
         // Push GTAO parameters
         SDL_PushGPUFragmentUniformData(commandBuffer, 0, &m_gtaoParams, sizeof(m_gtaoParams));

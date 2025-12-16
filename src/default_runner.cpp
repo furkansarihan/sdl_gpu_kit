@@ -130,6 +130,8 @@ SDL_AppResult DefaultRunner::Iterate()
     m_deltaTime = (currentFrame - m_lastFrame) / 1e9f;
     m_lastFrame = currentFrame;
 
+    m_postProcess->m_gtaoMask.clear(1);
+
     m_camera->view = glm::lookAt(m_camera->position, m_camera->position + m_camera->front, m_camera->up);
     m_camera->projection = glm::perspective(glm::radians(m_camera->fov), (float)m_width / (float)m_height, m_camera->near, m_camera->far);
     m_updateManager->update(m_deltaTime);

@@ -1,10 +1,12 @@
 #pragma once
 
+#include <glm/common.hpp>
 #include <glm/glm.hpp>
 
 #include <SDL3/SDL_gpu.h>
 
 #include "../ui/base_ui.h"
+#include "screen_mask.h"
 
 struct PostProcessFragmentUBO
 {
@@ -75,6 +77,9 @@ struct SMAAUniforms
     glm::vec3 padding;
 };
 
+// using ScreenMask32 = MaskTexture<32, 32>;
+using ScreenMask64 = MaskTexture<64, 64>;
+
 class PostProcess : public BaseUI
 {
 public:
@@ -86,6 +91,7 @@ public:
     BloomUpsampleUBO m_upsampleUBO;
     GTAOParamsUBO m_gtaoParams;
     float m_gtaoResolutionFactor;
+    ScreenMask64 m_gtaoMask;
 
     SDL_GPUSampleCount m_sampleCount;
 
@@ -97,9 +103,10 @@ public:
     SDL_GPUTexture *m_msaaDepthTexture = nullptr;
     SDL_GPUTexture *m_colorTexture = nullptr;
     SDL_GPUTexture *m_depthTexture = nullptr;
-    SDL_GPUTexture *m_gtaoRawTexture = nullptr;  // Raw GTAO result (RG format)
+    SDL_GPUTexture *m_gtaoRawTexture = nullptr; // Raw GTAO result (RG format)
     SDL_GPUTexture *m_gtaoBlur0Texture = nullptr;
     SDL_GPUTexture *m_gtaoBlur1Texture = nullptr; // Final blurred GTAO
+    SDL_GPUTexture *m_gtaoMaskTexture = nullptr;
 
     static const int BLOOM_MIPS = 5;
     SDL_GPUTexture *m_bloomMip[BLOOM_MIPS] = {};

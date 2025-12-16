@@ -31,6 +31,7 @@ layout(std140, binding = 0) uniform GTAOParams
 } ubo;
 
 layout(binding = 0) uniform sampler2D depthTex;
+layout(binding = 1) uniform sampler2D gtaoMaskTex;
 
 #define HALF_PI 1.5707963267948966
 #define PI 3.14159265359
@@ -208,12 +209,23 @@ void groundTruthAmbientOcclusion(out float obscurance, vec2 uv, vec3 origin, vec
     obscurance = 1.0 - saturate(visibility * ubo.sliceCount.y);
 }
 
+float sampleGTAOMask(vec2 uv) {
+    float maskValue = texture(gtaoMaskTex, uv).r;
+    return maskValue;
+}
+
 void main() {
     vec2 uv = vUV;
     float depth = texture(depthTex, uv).r;
     
     // Standard OpenGL/Vulkan depth check
     if (depth > 0.999) {
+        outOcclusionAndDepth = vec2(1.0, 0.0);
+        return;
+    }
+
+    float regionMask = sampleGTAOMask(uv);
+    if (regionMask < 0.001) {
         outOcclusionAndDepth = vec2(1.0, 0.0);
         return;
     }
