@@ -53,6 +53,15 @@ layout(binding = 2) uniform ShadowUniformBlock {
     vec3 padding;
 } shadowUBO;
 
+layout(binding = 3) uniform FogUniformBlock {
+    vec3 fogColor;
+    float fogStart;
+
+    float fogEnd;
+    float fogMaxOpacity;
+    vec2 padding;
+} fogUBO;
+
 // Textures
 layout(binding = 0) uniform sampler2D albedoMap;
 layout(binding = 1) uniform sampler2D normalMap;
@@ -79,6 +88,7 @@ vec3 getNormalFromMap(vec2 uv, vec3 T, vec3 B, vec3 N)
 
 #include "shadowing.fs"
 #include "pbr.fs"
+#include "fog.fs"
 
 void main()
 {
@@ -181,6 +191,10 @@ void main()
 
     // --- Final Color ---
     vec3 color = shade.ambient + shade.Lo * visibility;
+
+    // Fog
+    float dist = distance(ubo.viewPos, fragPos);
+    color = linearFog(color, dist);
 
     outColor = vec4(color, alpha);
     // outColor = vec4(vec3(material.alphaCutoff), alpha);

@@ -34,7 +34,6 @@ PbrManager::PbrManager(ResourceManager *resourceManager)
 
 PbrManager::~PbrManager()
 {
-    SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_graphicsPipeline);
     SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_brdfPipeline);
     SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_cubemapPipeline);
     SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_irradiancePipeline);

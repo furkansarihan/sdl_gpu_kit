@@ -107,6 +107,19 @@ void RenderManager::renderUI()
         ImGui::TreePop();
     }
 
+    if (ImGui::TreeNode("Fog"))
+    {
+        ImGui::PushID(&m_fogUBO);
+
+        ImGui::ColorEdit3("Color", &m_fogUBO.fogColor.x);
+        ImGui::DragFloat("Start", &m_fogUBO.fogStart, 1.f);
+        ImGui::DragFloat("End", &m_fogUBO.fogEnd, 1.f);
+        ImGui::DragFloat("Max Opacity", &m_fogUBO.fogMaxOpacity, 0.01f, 0.f, 1.f);
+
+        ImGui::PopID();
+        ImGui::TreePop();
+    }
+
     if (ImGui::TreeNode("Transparency Textures"))
     {
         ImGui::Text("Accumulate");
@@ -229,7 +242,7 @@ void RenderManager::createPipeline(SDL_GPUSampleCount sampleCount)
     m_sampleCount = sampleCount;
 
     SDL_GPUShader *vertexShader = Utils::loadShader("src/shaders/pbr.vert", 0, 1, SDL_GPU_SHADERSTAGE_VERTEX);
-    SDL_GPUShader *fragmentShader = Utils::loadShader("src/shaders/pbr.frag", 10, 3, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    SDL_GPUShader *fragmentShader = Utils::loadShader("src/shaders/pbr.frag", 10, 4, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
     SDL_GPUGraphicsPipelineCreateInfo pipelineInfo{};
     pipelineInfo.vertex_shader = vertexShader;
@@ -323,7 +336,7 @@ void RenderManager::createPipeline(SDL_GPUSampleCount sampleCount)
     SDL_ReleaseGPUShader(m_device, fragmentShader);
 
     // --- 2. OIT Geometry Pipeline ---
-    SDL_GPUShader *oitShader = Utils::loadShader("src/shaders/pbr_oit.frag", 10, 3, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    SDL_GPUShader *oitShader = Utils::loadShader("src/shaders/pbr_oit.frag", 10, 4, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
     pipelineInfo = SDL_GPUGraphicsPipelineCreateInfo{};
     pipelineInfo.vertex_shader = vertexShader;
@@ -429,6 +442,7 @@ void RenderManager::renderOpaque(
 
     SDL_PushGPUFragmentUniformData(cmd, 0, &m_fragmentUniforms, sizeof(FragmentUniforms));
     SDL_PushGPUFragmentUniformData(cmd, 2, &m_shadowManager->m_shadowUniforms, sizeof(ShadowUniforms));
+    SDL_PushGPUFragmentUniformData(cmd, 3, &m_fogUBO, sizeof(FogUniforms));
 
     Frustum frustum = Frustum::fromMatrix(projection * view);
 
@@ -441,6 +455,7 @@ void RenderManager::renderOpaque(
 
     SDL_PushGPUFragmentUniformData(cmd, 0, &m_fragmentUniforms, sizeof(FragmentUniforms));
     SDL_PushGPUFragmentUniformData(cmd, 2, &m_shadowManager->m_shadowUniforms, sizeof(ShadowUniforms));
+    SDL_PushGPUFragmentUniformData(cmd, 3, &m_fogUBO, sizeof(FogUniforms));
 
     for (Renderable *r : m_renderables)
         r->renderOpaqueDoubleSided(cmd, pass, view, projection, frustum);
@@ -451,6 +466,7 @@ void RenderManager::renderOpaque(
 
     SDL_PushGPUFragmentUniformData(cmd, 0, &m_fragmentUniforms, sizeof(FragmentUniforms));
     SDL_PushGPUFragmentUniformData(cmd, 2, &m_shadowManager->m_shadowUniforms, sizeof(ShadowUniforms));
+    SDL_PushGPUFragmentUniformData(cmd, 3, &m_fogUBO, sizeof(FogUniforms));
 
     for (Renderable *r : m_renderables)
         r->renderAnimation(cmd, pass, view, projection, frustum);
@@ -471,6 +487,7 @@ void RenderManager::renderTransparent(
     // TODO: ?
     SDL_PushGPUFragmentUniformData(cmd, 0, &m_fragmentUniforms, sizeof(FragmentUniforms));
     SDL_PushGPUFragmentUniformData(cmd, 2, &m_shadowManager->m_shadowUniforms, sizeof(ShadowUniforms));
+    SDL_PushGPUFragmentUniformData(cmd, 3, &m_fogUBO, sizeof(FogUniforms));
 
     for (Renderable *r : m_renderables)
         r->renderTransparent(cmd, pass, view, projection, frustum);

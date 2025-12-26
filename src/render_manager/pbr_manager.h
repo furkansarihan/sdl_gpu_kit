@@ -73,7 +73,6 @@ public:
     SDL_GPUTexture *m_environmentTexture;
 
     // pipeline
-    SDL_GPUGraphicsPipeline *m_graphicsPipeline = nullptr;
     SDL_GPUGraphicsPipeline *m_brdfPipeline = nullptr;
     SDL_GPUGraphicsPipeline *m_cubemapPipeline = nullptr;
     SDL_GPUGraphicsPipeline *m_irradiancePipeline = nullptr;

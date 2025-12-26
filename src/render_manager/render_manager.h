@@ -53,6 +53,16 @@ struct MaterialUniforms
     glm::vec3 padding;
 };
 
+struct FogUniforms
+{
+    glm::vec3 fogColor{0.f};
+    float fogStart = 0.f;
+
+    float fogEnd = 0.f;
+    float fogMaxOpacity = 0.f;
+    glm::vec2 padding;
+};
+
 class Renderable
 {
 public:
@@ -105,6 +115,7 @@ public:
     ~RenderManager();
 
     FragmentUniforms m_fragmentUniforms;
+    FogUniforms m_fogUBO;
 
     SDL_GPUDevice *m_device;
     SDL_Window *m_window;
