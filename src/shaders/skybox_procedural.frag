@@ -31,7 +31,14 @@ layout(binding = 0) uniform SkyboxFragmentUBO {
 
     vec3 mieKCoefficient;
     float padding2;
+
+    float time;
+    float cloudScale;
+    float cloudCoverage;
+    float padding3;
 } ubo;
+
+layout(binding = 0) uniform sampler2D noiseTexture;
 
 const float PI = 3.141592653589793;
 const vec3 UP = vec3(0.0, 1.0, 0.0);
@@ -59,6 +66,26 @@ float sunIntensity(float zenithAngleCos) {
     return ubo.sunIntensityFactor * max(0.0, 1.0 - exp(-((cutoffAngle - acos(zenithAngleCos)) / ubo.sunIntensityFalloffSteepness)));
 }
 
+float getCloudAlpha(vec3 cloudPos) {
+    float cloudCeiling = 1000.0;
+    vec3 planarPos = cloudPos * (cloudCeiling / max(cloudPos.y, 0.05));
+
+    vec2 noiseCoord = planarPos.xz * (0.001 * ubo.cloudScale);
+    noiseCoord.x += ubo.time * 0.006;
+
+    float baseCloud = texture(noiseTexture, noiseCoord, 3.0).r;
+
+    vec2 detailCoord = noiseCoord * 2.0; 
+    detailCoord.x -= ubo.time * 0.002;
+    float detailCloud = texture(noiseTexture, detailCoord, 1.0).r;
+
+    float cloudVal = baseCloud * 0.7 + detailCloud * 0.3;
+    float cloudAlpha = smoothstep(1.0 - ubo.cloudCoverage, 1.0, cloudVal);
+
+    // Simple horizon fade
+    return cloudAlpha * clamp((cloudPos.y - 0.05) * 5.0, 0.0, 1.0);
+}
+
 void main() {
     vec3 vWorldPosition = fragTexCoord;
     
@@ -74,7 +101,8 @@ void main() {
     vec3 betaM = totalMie(ubo.primaries, ubo.mieKCoefficient, ubo.turbidity) * ubo.mieCoefficient;
     
     // Optical length
-    float zenithAngle = acos(max(0.0, dot(UP, normalize(vWorldPosition - ubo.cameraPos))));
+    vec3 viewDir = normalize(vWorldPosition - ubo.cameraPos);
+    float zenithAngle = acos(max(0.0, dot(UP, viewDir)));
     float denom = cos(zenithAngle) + 0.15 * pow(93.885 - ((zenithAngle * 180.0) / PI), -1.253);
     float sR = ubo.rayleighZenithLength / denom;
     float sM = ubo.mieZenithLength / denom;
@@ -84,7 +112,7 @@ void main() {
     
     // In-scattering
     vec3 sunDirection = normalize(ubo.sunPosition);
-    float cosTheta = dot(normalize(vWorldPosition - ubo.cameraPos), sunDirection);
+    float cosTheta = dot(viewDir, sunDirection);
     vec3 betaRTheta = betaR * rayleighPhase(cosTheta * 0.5 + 0.5);
     vec3 betaMTheta = betaM * henyeyGreensteinPhase(cosTheta, ubo.mieDirectionalG);
     float sunE = sunIntensity(dot(sunDirection, UP));
@@ -97,10 +125,17 @@ void main() {
     float sundisk = smoothstep(sunAngularDiameterCos, sunAngularDiameterCos + 0.00002, cosTheta);
     vec3 L0 = vec3(0.1) * Fex;
     L0 += sunE * 19000.0 * Fex * sundisk;
+
+    // Sky color
+    vec3 skyColor = (Lin + L0) * 0.04;
+    skyColor += vec3(0.0, 0.001, 0.0025) * 0.3;
+
+    // Cloud color
+    vec3 cloudColor = vec3(0.9);
+    float cloudAlpha = getCloudAlpha(viewDir);
     
     // Final color
-    vec3 color = (Lin + L0) * 0.04;
-    color += vec3(0.0, 0.001, 0.0025) * 0.3;
+    vec3 finalColor = mix(skyColor, cloudColor, cloudAlpha);
 
-    outColor = vec4(color, 1.0);
+    outColor = vec4(finalColor, 1.0);
 }

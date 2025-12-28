@@ -52,6 +52,11 @@ struct SunFragmentUBO
 
     glm::vec3 mieKCoefficient;
     float padding2;
+
+    float time;
+    float cloudScale;
+    float cloudCoverage;
+    float padding3;
 };
 
 class PbrManager
@@ -85,6 +90,7 @@ public:
     SDL_GPUTexture *m_cubemapTexture = nullptr;
     SDL_GPUTexture *m_irradianceTexture = nullptr;
     SDL_GPUTexture *m_prefilterTexture = nullptr;
+    Texture m_cloudNoiseTexture;
 
     // sampler
     SDL_GPUSampler *m_hdrSampler;

@@ -155,6 +155,7 @@ SDL_AppResult DefaultRunner::Iterate()
     const glm::mat4 &projection = m_camera->projection;
     m_renderManager->m_fragmentUniforms.viewPos = m_camera->position;
     m_renderManager->m_pbrManager->m_sunUBO.sunPosition = -m_renderManager->m_fragmentUniforms.lightDir * 100000.f;
+    m_renderManager->m_pbrManager->m_sunUBO.time += m_deltaTime;
 
     // --- Shadow Pass ---
     float aspect = static_cast<float>(m_width) / static_cast<float>(m_height);
@@ -232,8 +233,8 @@ SDL_AppResult DefaultRunner::Iterate()
     }
 
     SDL_GPURenderPass *renderPass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, &depthInfo);
-    m_renderManager->m_pbrManager->renderSkybox(commandBuffer, renderPass, view, projection);
     m_renderManager->renderOpaque(commandBuffer, renderPass, view, projection, m_camera->position);
+    m_renderManager->m_pbrManager->renderSkybox(commandBuffer, renderPass, view, projection);
     SDL_EndGPURenderPass(renderPass);
 
     m_postProcess->resolveDepth(commandBuffer);

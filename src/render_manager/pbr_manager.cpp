@@ -5,6 +5,7 @@
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
 
+#include "../resource_manager/resource_manager.h"
 #include "../utils/utils.h"
 
 PbrManager::PbrManager(ResourceManager *resourceManager)
@@ -13,6 +14,18 @@ PbrManager::PbrManager(ResourceManager *resourceManager)
     init();
     createSkyboxPipelines(Utils::device);
     createBRDFTexture();
+
+    // cloud noise texture
+    {
+        std::string exePath = Utils::getExecutablePath();
+
+        const char *hdriPath = "src/assets/textures/cloud-noise.jpeg";
+        TextureParams params;
+        params.dataType = TextureDataType::UnsignedByteSRGB;
+        params.sample = true;
+
+        m_cloudNoiseTexture = resourceManager->loadTextureFromFile(params, std::string(exePath + "/" + hdriPath));
+    }
 
     m_sunUBO.cameraPos = glm::vec3(0.0f, 0.0f, 0.0f);
     m_sunUBO.turbidity = 2.0f;                                    // 2-10, lower = clearer sky
@@ -30,6 +43,9 @@ PbrManager::PbrManager(ResourceManager *resourceManager)
     m_sunUBO.depolarizationFactor = 0.035f;                       // Depolarization factor
     m_sunUBO.primaries = glm::vec3(680e-9f, 550e-9f, 450e-9f);    // RGB wavelengths in meters
     m_sunUBO.mieKCoefficient = glm::vec3(0.686f, 0.678f, 0.666f); // Mie scattering coefficients
+    m_sunUBO.time = 0.f;
+    m_sunUBO.cloudScale = 0.2f;
+    m_sunUBO.cloudCoverage = 0.8f;
 }
 
 PbrManager::~PbrManager()
@@ -52,6 +68,8 @@ PbrManager::~PbrManager()
 
     m_resourceManager->dispose(m_cubeModel);
     m_resourceManager->dispose(m_quadModel);
+
+    m_resourceManager->dispose(m_cloudNoiseTexture);
 }
 
 SDL_GPUGraphicsPipeline *CreatePbrPipeline(
@@ -193,7 +211,7 @@ void PbrManager::createSkyboxPipelines(SDL_GPUDevice *device)
     m_skyboxPipeline = SDL_CreateGPUGraphicsPipeline(device, &pipelineInfo);
 
     // Procedural skybox
-    SDL_GPUShader *skyboxSunFragShader = Utils::loadShader("src/shaders/skybox_procedural.frag", 0, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    SDL_GPUShader *skyboxSunFragShader = Utils::loadShader("src/shaders/skybox_procedural.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
     pipelineInfo.fragment_shader = skyboxSunFragShader;
     m_proceduralSkyboxPipeline = SDL_CreateGPUGraphicsPipeline(device, &pipelineInfo);
 
@@ -551,6 +569,19 @@ void PbrManager::renderSkybox(
     else
         SDL_BindGPUGraphicsPipeline(renderPass, m_skyboxPipeline);
 
+    if (m_proceduralSkyEnabled)
+    {
+        // Bind noise texture
+        SDL_GPUTextureSamplerBinding textureSamplerBinding{m_cloudNoiseTexture.id, Utils::baseSampler};
+        SDL_BindGPUFragmentSamplers(renderPass, 0, &textureSamplerBinding, 1);
+    }
+    else
+    {
+        // Bind cubemap texture
+        SDL_GPUTextureSamplerBinding textureSamplerBinding{m_cubemapTexture, m_cubeSampler};
+        SDL_BindGPUFragmentSamplers(renderPass, 0, &textureSamplerBinding, 1);
+    }
+
     // Bind vertex buffer
     SDL_GPUBufferBinding vertexBinding{cubePrimitive.vertexBuffer, 0};
     SDL_BindGPUVertexBuffers(renderPass, 0, &vertexBinding, 1);
@@ -558,10 +589,6 @@ void PbrManager::renderSkybox(
     // Bind index buffer
     SDL_GPUBufferBinding indexBinding{cubePrimitive.indexBuffer, 0};
     SDL_BindGPUIndexBuffer(renderPass, &indexBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
-
-    // Bind cubemap texture
-    SDL_GPUTextureSamplerBinding textureSamplerBinding{m_cubemapTexture, m_cubeSampler};
-    SDL_BindGPUFragmentSamplers(renderPass, 0, &textureSamplerBinding, 1);
 
     // Draw the cube
     SDL_DrawGPUIndexedPrimitives(renderPass, cubePrimitive.indices.size(), 1, 0, 0, 0);

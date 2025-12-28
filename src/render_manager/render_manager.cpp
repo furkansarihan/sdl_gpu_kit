@@ -103,6 +103,10 @@ void RenderManager::renderUI()
         m_pbrManager->m_sunUBO.primaries = primaries_nm * 1.0e-9f;
 
         ImGui::DragFloat3("MieKCoefficient", &m_pbrManager->m_sunUBO.mieKCoefficient.x, 0.001f);
+        ImGui::Separator();
+
+        ImGui::DragFloat("Cloud Scale", &m_pbrManager->m_sunUBO.cloudScale, 0.01f, 0.f);
+        ImGui::DragFloat("Cloud Coverage", &m_pbrManager->m_sunUBO.cloudCoverage, 0.01f, 0.f);
 
         ImGui::TreePop();
     }
