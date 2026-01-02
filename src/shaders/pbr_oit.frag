@@ -39,8 +39,9 @@ layout(binding = 1) uniform MaterialUniformBlock {
     int hasOpacityTexture;
     vec2 uvScale;
 
-    bool doubleSided;
-    vec3 padding;
+    int doubleSided;
+    int receiveShadow;
+    vec2 padding;
 } material;
 
 const int MAX_CASCADES = 4;
@@ -148,7 +149,7 @@ void main()
         N = normalize(fragNormal);
     }
 
-    if (material.doubleSided && !gl_FrontFacing) {
+    if (material.doubleSided > 0 && !gl_FrontFacing) {
         N = -N;
     }
 
@@ -159,7 +160,7 @@ void main()
     float NdotL = max(dot(N, L), 0.0);
 
     float visibility = 1.0;
-    if (NdotL > 0.0) {
+    if (material.receiveShadow > 0 && NdotL > 0.0) {
         visibility = shadow(fragPos, N, ubo.viewPos, ubo.lightDir, 2u);
     }
 

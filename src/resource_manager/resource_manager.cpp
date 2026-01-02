@@ -346,7 +346,7 @@ ModelData *ResourceManager::loadModel(const std::string &path)
         else
             mat->alphaMode = AlphaMode::Opaque;
 
-        mat->doubleSided = gltfMat.doubleSided;
+        mat->doubleSided = gltfMat.doubleSided ? 1 : 0;
 
         const auto &pbr = gltfMat.pbrMetallicRoughness;
         if (pbr.baseColorFactor.size() == 4)

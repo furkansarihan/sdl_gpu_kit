@@ -49,8 +49,9 @@ struct MaterialUniforms
     int hasOpacityTexture;
     glm::vec2 uvScale;
 
-    bool doubleSided;
-    glm::vec3 padding;
+    int doubleSided;
+    int receiveShadow;
+    glm::vec2 padding;
 };
 
 struct FogUniforms

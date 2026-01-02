@@ -55,7 +55,8 @@ public:
     AlphaMode alphaMode;
     float alphaCutoff;
 
-    bool doubleSided;
+    int doubleSided;
+    int receiveShadow;
 
     Material(const std::string &name)
         : name(name),
@@ -67,7 +68,8 @@ public:
           emissiveColor(glm::vec4(0.f, 0.f, 0.f, 0.f)),
           alphaMode(AlphaMode::Opaque),
           alphaCutoff(0.f),
-          doubleSided(false)
+          doubleSided(0),
+          receiveShadow(1)
     {
     }
 };
