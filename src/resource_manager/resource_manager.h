@@ -101,6 +101,7 @@ struct NodeData
 {
     glm::mat4 localTransform; // Local transformation matrix
     glm::mat4 worldTransform; // World transformation matrix
+    glm::mat4 offset{1.f};
     std::string name;
     int meshIndex; // Index of mesh attached to this node (-1 if none)
 };

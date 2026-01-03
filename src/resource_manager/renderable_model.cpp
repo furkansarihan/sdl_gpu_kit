@@ -109,7 +109,7 @@ void RenderableModel::renderModel(
             continue;
 
         const MeshData &mesh = m_model->meshes[node.meshIndex];
-        const glm::mat4 &world = m_animator ? m_animator->m_finalBoneMatrices[0] : node.worldTransform;
+        const glm::mat4 &world = node.offset * (m_animator ? m_animator->m_finalBoneMatrices[0] : node.worldTransform);
         const glm::mat4 cullWorld = m_cullOffset * world;
 
         for (const auto &prim : mesh.primitives)
