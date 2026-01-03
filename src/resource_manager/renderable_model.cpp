@@ -64,6 +64,7 @@ void RenderableModel::renderPrimitive(
     matUniforms.alphaCutoff = mat->alphaCutoff;
     matUniforms.uvScale = mat->uvScale;
     matUniforms.doubleSided = mat->doubleSided;
+    matUniforms.mirrorBackFace = mat->mirrorBackFace;
     matUniforms.receiveShadow = mat->receiveShadow;
     matUniforms.hasAlbedoTexture = (mat->albedoTexture.id != nullptr);
     matUniforms.hasNormalTexture = (mat->normalTexture.id != nullptr);

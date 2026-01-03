@@ -40,8 +40,9 @@ layout(binding = 1) uniform MaterialUniformBlock {
     vec2 uvScale;
 
     int doubleSided;
+    int mirrorBackFace;
     int receiveShadow;
-    vec2 padding;
+    int padding;
 } material;
 
 const int MAX_CASCADES = 4;
@@ -95,6 +96,11 @@ void main()
 {
     // --- Material Properties ---
     vec2 uv = fragUV * material.uvScale;
+
+    if (material.doubleSided == 1 && material.mirrorBackFace == 1 && !gl_FrontFacing)
+    {
+        uv.x = 1.0 - uv.x;
+    }
 
     vec3 albedo;
     float ao, roughness, metallic;

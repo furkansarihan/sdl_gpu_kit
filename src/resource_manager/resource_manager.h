@@ -56,6 +56,7 @@ public:
     float alphaCutoff;
 
     int doubleSided;
+    int mirrorBackFace;
     int receiveShadow;
 
     Material(const std::string &name)
@@ -69,6 +70,7 @@ public:
           alphaMode(AlphaMode::Opaque),
           alphaCutoff(0.f),
           doubleSided(0),
+          mirrorBackFace(0),
           receiveShadow(1)
     {
     }

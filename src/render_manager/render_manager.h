@@ -50,6 +50,7 @@ struct MaterialUniforms
     glm::vec2 uvScale;
 
     int doubleSided;
+    int mirrorBackFace;
     int receiveShadow;
     glm::vec2 padding;
 };
