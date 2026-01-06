@@ -11,7 +11,7 @@
 PostProcess::PostProcess(SDL_GPUSampleCount sampleCount)
 {
     m_fullscreenVert = Utils::loadShader("src/shaders/fullscreen.vert", 0, 0, SDL_GPU_SHADERSTAGE_VERTEX);
-    m_postProcessFrag = Utils::loadShader("src/shaders/post.frag", 3, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
+    m_postProcessFrag = Utils::loadShader("src/shaders/post.frag", 4, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
     m_bloomDownFrag = Utils::loadShader("src/shaders/downsample.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
     m_bloomUpFrag = Utils::loadShader("src/shaders/upsample.frag", 1, 1, SDL_GPU_SHADERSTAGE_FRAGMENT);
 
@@ -181,6 +181,8 @@ PostProcess::PostProcess(SDL_GPUSampleCount sampleCount)
     m_UBO.gamma = 2.2f;
     m_UBO.bloomIntensity = 0.2f;
     m_UBO.fxaaEnabled = 0;
+    m_UBO.lutEnabled = 0;
+    m_UBO.lutIntensity = 1.f;
     m_upsampleUBO.filterRadius = 1.;
     m_downsampleUBO.highlight = 100.0f;
 
@@ -300,6 +302,7 @@ void PostProcess::renderUI()
     {
         ImGui::DragFloat("Exposure", &m_UBO.exposure, 0.01f, 0.f);
         ImGui::DragFloat("Gamma", &m_UBO.gamma, 0.01f, 0.f);
+        ImGui::DragFloat("Lut Intensity", &m_UBO.lutIntensity, 0.01f, 0.f);
 
         ImGui::TreePop();
     }
@@ -917,13 +920,14 @@ void PostProcess::postProcess(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTextur
     {
         SDL_BindGPUGraphicsPipeline(finalPass, m_postProcessPipeline);
 
-        SDL_GPUTextureSamplerBinding inputs[3] =
+        SDL_GPUTextureSamplerBinding inputs[4] =
             {
                 {color, Utils::baseSampler},
                 {m_bloomMip[0], Utils::baseSampler},
                 {m_gtaoBlur1Texture, Utils::baseSampler},
+                {m_lutTex, m_smaaLutSampler},
             };
-        SDL_BindGPUFragmentSamplers(finalPass, 0, inputs, 3);
+        SDL_BindGPUFragmentSamplers(finalPass, 0, inputs, 4);
 
         SDL_PushGPUFragmentUniformData(commandBuffer, 0, &m_UBO, sizeof(m_UBO));
 

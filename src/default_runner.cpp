@@ -90,6 +90,7 @@ SDL_AppResult DefaultRunner::Init(int argc, char **argv)
     m_renderManager->updateResources(m_initWindowSize, msaaSampleCount);
     m_postProcess = new PostProcess(msaaSampleCount);
     m_postProcess->update(m_initWindowSize);
+    m_postProcess->m_lutTex = m_renderManager->m_defaultTexture;
     m_updateManager = new UpdateManager();
     m_camera = new Camera();
 

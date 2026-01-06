@@ -15,7 +15,8 @@ struct PostProcessFragmentUBO
     float gamma;
     float bloomIntensity;
     Uint32 fxaaEnabled;
-    float padding[2];
+    Uint32 lutEnabled;
+    float lutIntensity;
 };
 
 struct BloomDownsampleUBO
@@ -142,6 +143,9 @@ public:
     SDL_GPUGraphicsPipeline *m_smaaEdgePipeline = nullptr;
     SDL_GPUGraphicsPipeline *m_smaaBlendPipeline = nullptr;
     SDL_GPUGraphicsPipeline *m_smaaNeighborPipeline = nullptr;
+    
+    // LUT
+    SDL_GPUTexture *m_lutTex = nullptr;
 
     void renderUI() override;
 
