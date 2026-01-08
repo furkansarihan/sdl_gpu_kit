@@ -175,26 +175,26 @@ void main()
         visibility = shadow(fragPos, N, ubo.viewPos, ubo.lightDir, 2u);
     }
 
-    // debug cascade
-    /* {
-        int index = getCascadeIndex(fragPos);
-        if (index == 0) {
-            ambient = vec3(0.0, 1.0, 0.0);
-        } else if (index == 1) {
-            ambient = vec3(1.0, 1.0, 0.0);
-        } else if (index == 2) {
-            ambient = vec3(1.0, 1.0, 1.0);
-        } else if (index == 3) {
-            ambient = vec3(0.0, 1.0, 1.0);
-        }
-    } */
-
     ShadeResult shade = shadePBR(
         fragPos,
         ubo.viewPos,
         ubo.lightDir,
         ubo.lightColor,
         albedo, metallic, roughness, N, ao);
+
+    /* // debug cascade
+    {
+        int index = getCascadeIndex(fragPos);
+        if (index == 0) {
+            shade.ambient = vec3(0.0, 1.0, 0.0);
+        } else if (index == 1) {
+            shade.ambient = vec3(1.0, 1.0, 0.0);
+        } else if (index == 2) {
+            shade.ambient = vec3(1.0, 1.0, 1.0);
+        } else if (index == 3) {
+            shade.ambient = vec3(0.0, 1.0, 1.0);
+        }
+    } */
 
     // --- Final Color ---
     vec3 color = shade.ambient + shade.Lo * visibility;

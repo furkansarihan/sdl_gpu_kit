@@ -11,22 +11,7 @@
 // --- Cascaded shadow map texture (2D array) ---
 ShadowManager::ShadowManager()
 {
-    SDL_GPUTextureCreateInfo shadowInfo{};
-    shadowInfo.type = SDL_GPU_TEXTURETYPE_2D_ARRAY;
-    shadowInfo.format = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
-    shadowInfo.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
-    shadowInfo.width = m_shadowMapResolution;
-    shadowInfo.height = m_shadowMapResolution;
-    shadowInfo.layer_count_or_depth = NUM_CASCADES; // array layers = cascades
-    // shadowInfo.layer_count_or_depth = 1; // array layers = cascades
-    shadowInfo.num_levels = 1;
-    shadowInfo.sample_count = SDL_GPU_SAMPLECOUNT_1;
-
-    m_shadowMapTexture = SDL_CreateGPUTexture(Utils::device, &shadowInfo);
-    if (!m_shadowMapTexture)
-    {
-        SDL_Log("Failed to create shadow map texture: %s", SDL_GetError());
-    }
+    updateTexture();
 
     SDL_GPUSamplerCreateInfo shadowSamplerInfo{};
     shadowSamplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
@@ -86,7 +71,7 @@ ShadowManager::ShadowManager()
         shadowInfo.multisample_state = ms;
 
         SDL_GPUColorTargetDescription colorTarget = {};
-        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
+        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R16_UNORM;
 
         SDL_GPUGraphicsPipelineTargetInfo targetInfo{};
         targetInfo.color_target_descriptions = &colorTarget;
@@ -150,9 +135,11 @@ void ShadowManager::renderUI()
 
     ImGui::PushID(this);
 
+    if (ImGui::DragInt("Shadowmap Size", &m_shadowMapResolution, 16, 16, 4096))
+        updateTexture();
     ImGui::DragFloat("Cascade Lambda", &m_cascadeLambda, 0.01f, 0.f, 1.f);
     ImGui::DragFloat("Shadow Far", &m_shadowUniforms.shadowFar, 0.2f, 0.f, 1000.f);
-    // ImGui::DragFloat4("Bias", &shadowUniforms.cascadeBias.x, 0.00001f, 0.f, 1.f, "%.5f");
+    ImGui::DragFloat4("Bias", &m_shadowUniforms.cascadeBias.x, 0.00001f, 0.f, 1.f, "%.5f");
 
     // TODO:
     /* if (ImGui::TreeNodeEx("Camera", ImGuiTreeNodeFlags_DefaultOpen))
@@ -176,6 +163,32 @@ void ShadowManager::renderUI()
     ImGui::PopID();
 }
 
+void ShadowManager::updateTexture()
+{
+    if (m_shadowMapTexture)
+    {
+        SDL_ReleaseGPUTexture(Utils::device, m_shadowMapTexture);
+        m_shadowMapTexture = nullptr;
+    }
+
+    SDL_GPUTextureCreateInfo shadowInfo{};
+    shadowInfo.type = SDL_GPU_TEXTURETYPE_2D_ARRAY;
+    shadowInfo.format = SDL_GPU_TEXTUREFORMAT_R16_UNORM;
+    shadowInfo.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    shadowInfo.width = m_shadowMapResolution;
+    shadowInfo.height = m_shadowMapResolution;
+    shadowInfo.layer_count_or_depth = NUM_CASCADES;
+    shadowInfo.num_levels = 1;
+    shadowInfo.sample_count = SDL_GPU_SAMPLECOUNT_1;
+
+    m_shadowMapTexture = SDL_CreateGPUTexture(Utils::device, &shadowInfo);
+
+    if (!m_shadowMapTexture)
+    {
+        SDL_Log("Failed to create shadow map texture: %s", SDL_GetError());
+    }
+}
+
 void ShadowManager::updateCascades(
     Camera *camera,
     const glm::mat4 &view,
@@ -188,13 +201,12 @@ void ShadowManager::updateCascades(
 
     float minZ = nearClip;
     float maxZ = nearClip + clipRange;
-
     float range = maxZ - minZ;
     float ratio = maxZ / minZ;
 
     float cascadeSplitsScalar[NUM_CASCADES];
 
-    // blend between uniform and logarithmic splits
+    // 1. Calculate Split Distances
     for (int i = 0; i < NUM_CASCADES; ++i)
     {
         float p = (i + 1) / static_cast<float>(NUM_CASCADES);
@@ -204,29 +216,23 @@ void ShadowManager::updateCascades(
         cascadeSplitsScalar[i] = (d - nearClip) / clipRange;
     }
 
-    glm::mat4 camView = view;
-    glm::mat4 invView = glm::inverse(camView);
+    glm::mat4 invView = glm::inverse(view);
 
     float fovY = glm::radians(camera->fov);
     float tanHalfFovY = std::tan(fovY * 0.5f);
     float tanHalfFovX = tanHalfFovY * aspect;
 
-    // Direction the light comes FROM (same as used in shading: L = normalize(-lightDir))
-    // glm::vec3 lightDir = glm::normalize(-fragmentUniforms.lightDir);
-
     glm::vec4 cascadeFarPlanes(0.0f);
 
-    for (int cascadeIndex = 0; cascadeIndex < NUM_CASCADES; ++cascadeIndex)
+    for (int i = 0; i < NUM_CASCADES; ++i)
     {
-        float prevSplitDist = (cascadeIndex == 0) ? 0.0f : cascadeSplitsScalar[cascadeIndex - 1];
-        float splitDist = cascadeSplitsScalar[cascadeIndex];
+        float prevSplitDist = (i == 0) ? 0.0f : cascadeSplitsScalar[i - 1];
+        float splitDist = cascadeSplitsScalar[i];
 
         float nearDist = nearClip + prevSplitDist * clipRange;
         float farDist = nearClip + splitDist * clipRange;
 
-        glm::vec3 frustumCornersWS[8];
-
-        // Frustum corners in view space (right-handed, camera looks down -Z)
+        // 2. Reconstruct Frustum Corners (View Space)
         float xn = nearDist * tanHalfFovX;
         float yn = nearDist * tanHalfFovY;
         float xf = farDist * tanHalfFovX;
@@ -242,76 +248,78 @@ void ShadowManager::updateCascades(
             glm::vec3(xf, -yf, -farDist),
             glm::vec3(-xf, -yf, -farDist)};
 
-        for (int i = 0; i < 8; ++i)
+        // 3. Transform to World Space & Calculate Center
+        glm::vec3 frustumCenter(0.0f);
+        for (int j = 0; j < 8; ++j)
         {
-            glm::vec4 vWorld = invView * glm::vec4(frustumCornersVS[i], 1.0f);
-            frustumCornersWS[i] = glm::vec3(vWorld);
+            glm::vec4 vW = invView * glm::vec4(frustumCornersVS[j], 1.0f);
+            frustumCornersVS[j] = glm::vec3(vW);
+            frustumCenter += frustumCornersVS[j];
+        }
+        frustumCenter /= 8.0f;
+
+        // 4. Calculate Bounding Sphere Radius
+        float radius = 0.0f;
+        for (int j = 0; j < 8; ++j)
+        {
+            float dist = glm::length(frustumCornersVS[j] - frustumCenter);
+            radius = glm::max(radius, dist);
         }
 
-        // Center of the frustum slice
-        glm::vec3 center(0.0f);
-        for (int i = 0; i < 8; ++i)
-            center += frustumCornersWS[i];
-        center /= 8.0f;
+        // Round radius to 1/16th unit to prevent jitter from floating point errors
+        radius = std::ceil(radius * 16.0f) / 16.0f;
 
-        // Build light view matrix
-        glm::vec3 up(0.0f, 1.0f, 0.0f);
-        if (std::abs(glm::dot(up, lightDir)) > 0.9f)
+        // 5. Build Light Matrix
+        glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
+        if (std::abs(glm::dot(up, lightDir)) > 0.99f)
             up = glm::vec3(0.0f, 0.0f, 1.0f);
 
-        float dist = farDist * 2.0f;
-        glm::vec3 lightPos = center - lightDir * dist;
+        // Initial View Matrix (at center)
+        glm::mat4 lightView = glm::lookAt(glm::vec3(0), -lightDir, up);
 
-        glm::mat4 lightView = glm::lookAt(lightPos, center, up);
+        // 6. Texel Snapping
+        // Transform center to Light Space
+        glm::vec4 centerLS = lightView * glm::vec4(frustumCenter, 1.0f);
 
-        // Find bounds in light-space
-        float minX = std::numeric_limits<float>::max();
-        float maxX = -std::numeric_limits<float>::max();
-        float minY = std::numeric_limits<float>::max();
-        float maxY = -std::numeric_limits<float>::max();
-        float minZ = std::numeric_limits<float>::max();
-        float maxZ = -std::numeric_limits<float>::max();
+        // Calculate texel size
+        float shadowMapSize = static_cast<float>(m_shadowMapResolution);
+        float texelsPerUnit = shadowMapSize / (radius * 2.0f);
 
-        for (int i = 0; i < 8; ++i)
-        {
-            glm::vec4 trf = lightView * glm::vec4(frustumCornersWS[i], 1.0f);
-            minX = std::min(minX, trf.x);
-            maxX = std::max(maxX, trf.x);
-            minY = std::min(minY, trf.y);
-            maxY = std::max(maxY, trf.y);
-            minZ = std::min(minZ, trf.z);
-            maxZ = std::max(maxZ, trf.z);
-        }
+        // Snap to grid
+        centerLS.x = glm::floor(centerLS.x * texelsPerUnit) / texelsPerUnit;
+        centerLS.y = glm::floor(centerLS.y * texelsPerUnit) / texelsPerUnit;
 
-        // Expand depth range a bit to accommodate moving objects & avoid clipping
-        const float zMult = 10.0f;
-        if (minZ < 0.0f)
-            minZ *= zMult;
-        else
-            minZ /= zMult;
-        if (maxZ < 0.0f)
-            maxZ /= zMult;
-        else
-            maxZ *= zMult;
+        // Transform snapped center back to World Space
+        glm::vec3 centerSnapped = glm::vec3(glm::inverse(lightView) * centerLS);
 
-        glm::mat4 lightProj = glm::ortho(minX, maxX, minY, maxY, -minZ, -maxZ);
+        // 7. Final View Matrix
+        float zMargin = radius * 2.f;
+        glm::vec3 eye = centerSnapped - (lightDir * zMargin);
+
+        lightView = glm::lookAt(eye, centerSnapped, up);
+
+        // 8. Final Projection Matrix (Zero-to-One)
+        float zFarDist = zMargin + radius * 2.0f;
+
+        glm::mat4 lightProj = glm::orthoRH_ZO(
+            -radius, radius,
+            -radius, radius,
+            zFarDist,
+            0.f);
 
         static const glm::mat4 m_biasMatrix = glm::mat4(
             0.5, 0.0, 0.0, 0.0,
             0.0, -0.5, 0.0, 0.0,
-            0.0, 0.0, 1.0, 0.0, // Changed from 0.5
-            0.5, 0.5, 0.0, 1.0  // Changed from 0.5
-        );
-        m_shadowUniforms.depthBiasVP[cascadeIndex] = m_biasMatrix * lightProj * lightView;
+            0.0, 0.0, 1.0, 0.0,
+            0.5, 0.5, 0.0, 1.0);
 
-        m_cascades[cascadeIndex].view = lightView;
-        m_cascades[cascadeIndex].projection = lightProj;
+        m_shadowUniforms.depthBiasVP[i] = m_biasMatrix * lightProj * lightView;
+        m_cascades[i].view = lightView;
+        m_cascades[i].projection = lightProj;
 
-        // Store view-space far distance for this cascade
-        float cascadeFar = nearClip + splitDist * clipRange;
-        (&cascadeFarPlanes.x)[cascadeIndex] = cascadeFar;
+        (&cascadeFarPlanes.x)[i] = nearClip + splitDist * clipRange;
     }
 
-    m_shadowUniforms.cameraView = camView;
+    m_shadowUniforms.cameraView = view;
     m_shadowUniforms.cascadeSplits = cascadeFarPlanes;
 }

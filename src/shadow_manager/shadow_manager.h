@@ -46,6 +46,7 @@ public:
     Cascade m_cascades[NUM_CASCADES];
 
     void renderUI() override;
+    void updateTexture();
     void updateCascades(
         Camera *camera,
         const glm::mat4 &view,
