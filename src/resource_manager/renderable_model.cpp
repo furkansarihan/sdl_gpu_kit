@@ -177,6 +177,9 @@ void RenderableModel::renderAnimation(
 }
 
 void RenderableModel::renderModelShadow(
+    bool checkDoubleSide,
+    bool doubleSide,
+    //
     SDL_GPUCommandBuffer *cmd,
     SDL_GPURenderPass *pass,
     const glm::mat4 &viewProj,
@@ -195,6 +198,15 @@ void RenderableModel::renderModelShadow(
 
         for (const auto &prim : mesh.primitives)
         {
+            static Material defaultMaterial("default");
+            Material *mat = prim.material ? prim.material : &defaultMaterial;
+
+            if (checkDoubleSide && mat->doubleSided != doubleSide)
+                continue;
+
+            if (!mat->castShadow)
+                continue;
+
             if (!PrimitiveInFrustum(prim, cullWorld, frustum))
                 continue;
 
@@ -230,7 +242,22 @@ void RenderableModel::renderShadow(
     if (m_animator)
         return;
 
-    renderModelShadow(cmd, pass, viewProj, frustum);
+    renderModelShadow(true, false, cmd, pass, viewProj, frustum);
+}
+
+void RenderableModel::renderShadowDoubleSided(
+    SDL_GPUCommandBuffer *cmd,
+    SDL_GPURenderPass *pass,
+    const glm::mat4 &viewProj,
+    const Frustum &frustum)
+{
+    if (!m_castingShadow)
+        return;
+
+    if (m_animator)
+        return;
+
+    renderModelShadow(true, true, cmd, pass, viewProj, frustum);
 }
 
 void RenderableModel::renderAnimationShadow(
@@ -249,7 +276,7 @@ void RenderableModel::renderAnimationShadow(
     size_t bytes = boneCount * sizeof(glm::mat4);
     SDL_PushGPUVertexUniformData(cmd, 1, m_animator->m_finalBoneMatrices.data(), bytes);
 
-    renderModelShadow(cmd, pass, viewProj, frustum);
+    renderModelShadow(false, false, cmd, pass, viewProj, frustum);
 }
 
 void RenderableModel::bindTextures(RenderManager *renderManager, SDL_GPURenderPass *pass, Material *mat)

@@ -77,12 +77,20 @@ public:
         const Frustum &frustum) override;
 
     void renderModelShadow(
+        bool checkDoubleSide,
+        bool doubleSide,
+        //
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,
         const glm::mat4 &viewProj,
         const Frustum &frustum);
 
     void renderShadow(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &viewProj,
+        const Frustum &frustum) override;
+    void renderShadowDoubleSided(
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,
         const glm::mat4 &viewProj,

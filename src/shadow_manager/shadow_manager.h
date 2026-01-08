@@ -39,6 +39,7 @@ public:
     SDL_GPUTexture *m_shadowMapTexture = nullptr;
     SDL_GPUSampler *m_shadowSampler = nullptr;
     SDL_GPUGraphicsPipeline *m_shadowPipeline = nullptr;
+    SDL_GPUGraphicsPipeline *m_shadowDoubleSidedPipeline = nullptr;
     SDL_GPUGraphicsPipeline *m_shadowAnimationPipeline = nullptr;
 
     // CPU-side uniform data

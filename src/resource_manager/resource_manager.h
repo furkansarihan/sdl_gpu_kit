@@ -58,6 +58,7 @@ public:
     int doubleSided;
     int mirrorBackFace;
     int receiveShadow;
+    int castShadow;
 
     Material(const std::string &name)
         : name(name),
@@ -71,7 +72,8 @@ public:
           alphaCutoff(0.f),
           doubleSided(0),
           mirrorBackFace(0),
-          receiveShadow(1)
+          receiveShadow(1),
+          castShadow(1)
     {
     }
 };

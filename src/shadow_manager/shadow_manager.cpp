@@ -86,6 +86,13 @@ ShadowManager::ShadowManager()
             SDL_Log("Failed to create shadow pipeline: %s", SDL_GetError());
         }
 
+        shadowInfo.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+        m_shadowDoubleSidedPipeline = SDL_CreateGPUGraphicsPipeline(Utils::device, &shadowInfo);
+        if (!m_shadowDoubleSidedPipeline)
+        {
+            SDL_Log("Failed to create m_shadowDoubleSidedPipeline: %s", SDL_GetError());
+        }
+
         SDL_GPUShader *shadowAnimationVert = Utils::loadShader("src/shaders/shadow_csm_skinned.vert", 0, 2, SDL_GPU_SHADERSTAGE_VERTEX);
         shadowInfo.vertex_shader = shadowAnimationVert;
 
@@ -119,6 +126,8 @@ ShadowManager::~ShadowManager()
 {
     if (m_shadowPipeline)
         SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_shadowPipeline);
+    if (m_shadowDoubleSidedPipeline)
+        SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_shadowDoubleSidedPipeline);
     if (m_shadowAnimationPipeline)
         SDL_ReleaseGPUGraphicsPipeline(Utils::device, m_shadowAnimationPipeline);
     if (m_shadowMapTexture)

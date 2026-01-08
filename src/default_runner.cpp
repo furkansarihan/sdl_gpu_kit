@@ -199,6 +199,14 @@ SDL_AppResult DefaultRunner::Iterate()
             r->renderShadow(commandBuffer, shadowPass, lightViewProj, frustum);
         }
 
+        SDL_BindGPUGraphicsPipeline(shadowPass, shadowManager->m_shadowDoubleSidedPipeline);
+        SDL_SetGPUViewport(shadowPass, &viewport);
+
+        for (Renderable *r : m_renderManager->m_renderables)
+        {
+            r->renderShadowDoubleSided(commandBuffer, shadowPass, lightViewProj, frustum);
+        }
+
         SDL_BindGPUGraphicsPipeline(shadowPass, shadowManager->m_shadowAnimationPipeline);
         SDL_SetGPUViewport(shadowPass, &viewport);
 

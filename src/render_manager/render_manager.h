@@ -99,6 +99,11 @@ public:
         SDL_GPURenderPass *pass,
         const glm::mat4 &viewProj,
         const Frustum &frustum) {};
+    virtual void renderShadowDoubleSided(
+        SDL_GPUCommandBuffer *cmd,
+        SDL_GPURenderPass *pass,
+        const glm::mat4 &viewProj,
+        const Frustum &frustum) {};    
     virtual void renderAnimationShadow(
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,
