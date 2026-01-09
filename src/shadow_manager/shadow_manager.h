@@ -17,7 +17,8 @@ struct ShadowUniforms
     glm::vec4 cascadeSplits;             // far plane distance per cascade (view-space depth)
     glm::vec4 cascadeBias;
     float shadowFar;
-    float paddin[3];
+    float strength;
+    float padding[2];
 };
 
 struct Cascade

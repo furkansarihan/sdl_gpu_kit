@@ -119,6 +119,7 @@ ShadowManager::ShadowManager()
 
     m_shadowUniforms.cascadeBias = {0.0005f, 0.0005f, 0.0005f, 0.0005f};
     m_shadowUniforms.shadowFar = 60.f;
+    m_shadowUniforms.strength = 0.8f;
     m_cascadeLambda = 0.8f;
 }
 
@@ -148,6 +149,7 @@ void ShadowManager::renderUI()
         updateTexture();
     ImGui::DragFloat("Cascade Lambda", &m_cascadeLambda, 0.01f, 0.f, 1.f);
     ImGui::DragFloat("Shadow Far", &m_shadowUniforms.shadowFar, 0.2f, 0.f, 1000.f);
+    ImGui::DragFloat("Shadow Strength", &m_shadowUniforms.strength, 0.01f, 0.f);
     ImGui::DragFloat4("Bias", &m_shadowUniforms.cascadeBias.x, 0.00001f, 0.f, 1.f, "%.5f");
 
     // TODO:

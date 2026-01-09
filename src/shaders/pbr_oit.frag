@@ -52,7 +52,8 @@ layout(binding = 2) uniform ShadowUniformBlock {
     vec4 cascadeSplits; // view-space far distance per cascade (x, y, z, w)
     vec4 cascadeBias;
     float shadowFar;
-    vec3 padding;
+    float strength;
+    vec2 padding;
 } shadowUBO;
 
 layout(binding = 3) uniform FogUniformBlock {

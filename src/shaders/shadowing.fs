@@ -273,7 +273,7 @@ float shadow(vec3 worldPos, vec3 normal, vec3 camPosition, vec3 lightDir, uint t
         zLight
     );
 
-    float visibility = 1.0 - shadow;
+    float visibility = 1.0 - shadow * shadowUBO.strength;
 
     /** Distance from the camera after which shadows are clipped. This is used to clip
      * shadows that are too far and wouldn't contribute to the scene much, improving
