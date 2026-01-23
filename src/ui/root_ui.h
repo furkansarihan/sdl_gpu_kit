@@ -13,8 +13,10 @@ public:
     ~RootUI();
 
     std::vector<BaseUI *> m_uiList;
+    std::vector<BaseUI *> m_overlayList;
     bool m_hidden;
 
     void render(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTexture *swapchainTexture);
     void add(BaseUI *ui);
+    void addOverlay(BaseUI *ui);
 };

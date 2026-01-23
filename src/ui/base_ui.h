@@ -4,5 +4,6 @@ class BaseUI
 {
 public:
     virtual ~BaseUI() {};
-    virtual void renderUI() = 0;
+    virtual void renderUI() {};
+    virtual void renderOverlay() {};
 };

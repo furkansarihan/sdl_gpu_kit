@@ -26,14 +26,12 @@ RootUI::~RootUI()
 
 void RootUI::render(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTexture *swapchainTexture)
 {
-    if (m_hidden)
-        return;
-
     // Start the Dear ImGui frame
     ImGui_ImplSDLGPU3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
 
+    if (!m_hidden)
     {
         static int corner = 0;
         ImGuiIO &io = ImGui::GetIO();
@@ -61,6 +59,11 @@ void RootUI::render(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTexture *swapcha
                 m_uiList.at(i)->renderUI();
         }
         ImGui::End();
+    }
+
+    {
+        for (int i = 0; i < m_overlayList.size(); i++)
+            m_overlayList.at(i)->renderOverlay();
     }
 
     // Rendering
@@ -93,4 +96,9 @@ void RootUI::render(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTexture *swapcha
 void RootUI::add(BaseUI *ui)
 {
     m_uiList.push_back(ui);
+}
+
+void RootUI::addOverlay(BaseUI *ui)
+{
+    m_overlayList.push_back(ui);
 }
