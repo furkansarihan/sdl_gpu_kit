@@ -23,6 +23,10 @@ public:
     virtual void onGamepadButtonPressed(SDL_JoystickID id, Uint8 button) {};
     virtual void onGamepadButtonReleased(SDL_JoystickID id, Uint8 button) {};
     virtual void onGamepadAxisMoved(SDL_JoystickID id, Uint8 axis, Sint16 value) {};
+
+    virtual void onDropBegin() {};
+    virtual void onFileDrop(const char *path) {};
+    virtual void onDropComplete() {};
 };
 
 class InputManager
@@ -87,4 +91,8 @@ private:
     void notifyGamepadButtonPressed(SDL_JoystickID id, Uint8 button);
     void notifyGamepadButtonReleased(SDL_JoystickID id, Uint8 button);
     void notifyGamepadAxisMoved(SDL_JoystickID id, Uint8 axis, Sint16 value);
+
+    void notifyDropBegin();
+    void notifyFileDrop(const char *path);
+    void notifyDropComplete();
 };

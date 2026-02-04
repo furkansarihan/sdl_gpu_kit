@@ -97,6 +97,16 @@ void InputManager::processEvent(const SDL_Event &event)
     case SDL_EVENT_GAMEPAD_AXIS_MOTION:
         notifyGamepadAxisMoved(event.gaxis.which, event.gaxis.axis, event.gaxis.value);
         break;
+    case SDL_EVENT_DROP_BEGIN:
+        notifyDropBegin();
+        break;
+    case SDL_EVENT_DROP_FILE:
+        if (event.drop.data)
+            notifyFileDrop(event.drop.data);
+        break;
+    case SDL_EVENT_DROP_COMPLETE:
+        notifyDropComplete();
+        break;
     }
 }
 
@@ -264,5 +274,29 @@ void InputManager::notifyGamepadAxisMoved(SDL_JoystickID id, Uint8 axis, Sint16 
     for (auto *listener : listeners)
     {
         listener->onGamepadAxisMoved(id, axis, value);
+    }
+}
+
+void InputManager::notifyDropBegin()
+{
+    for (auto *listener : listeners)
+    {
+        listener->onDropBegin();
+    }
+}
+
+void InputManager::notifyFileDrop(const char *path)
+{
+    for (auto *listener : listeners)
+    {
+        listener->onFileDrop(path);
+    }
+}
+
+void InputManager::notifyDropComplete()
+{
+    for (auto *listener : listeners)
+    {
+        listener->onDropComplete();
     }
 }
