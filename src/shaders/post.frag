@@ -1,5 +1,7 @@
 #version 450
 
+layout(location = 0) in vec2 inUV;
+
 layout(location = 0) out vec4 outColor;
 
 layout(binding = 0) uniform PostProcessFragmentUBO {
@@ -112,7 +114,7 @@ vec3 LookupLUT(vec3 color) {
 }
 
 void main() {
-    vec2 uv = gl_FragCoord.xy / vec2(textureSize(sceneTex, 0));
+    vec2 uv = inUV;
 
     vec3 color;
 

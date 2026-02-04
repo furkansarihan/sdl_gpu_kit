@@ -63,7 +63,7 @@ RenderManager::~RenderManager()
 
 void RenderManager::renderUI()
 {
-    if (!ImGui::CollapsingHeader("Render Manager", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!ImGui::CollapsingHeader("Render Manager", m_uiDefaultOpen ? ImGuiTreeNodeFlags_DefaultOpen : 0))
         return;
 
     ImGui::PushID(this);

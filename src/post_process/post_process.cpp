@@ -207,6 +207,7 @@ PostProcess::PostProcess(SDL_GPUSampleCount sampleCount)
 PostProcess::~PostProcess()
 {
     SDL_ReleaseGPUSampler(Utils::device, m_clampedSampler);
+    SDL_ReleaseGPUTexture(Utils::device, m_intermediateTexture);
     SDL_ReleaseGPUTexture(Utils::device, m_colorTexture);
     SDL_ReleaseGPUTexture(Utils::device, m_depthTexture);
     SDL_ReleaseGPUTexture(Utils::device, m_gtaoRawTexture);
@@ -236,7 +237,7 @@ PostProcess::~PostProcess()
 
 void PostProcess::renderUI()
 {
-    if (!ImGui::CollapsingHeader("Post Process", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!ImGui::CollapsingHeader("Post Process", m_uiDefaultOpen ? ImGuiTreeNodeFlags_DefaultOpen : 0))
         return;
 
     ImGui::Text("Screen Size: (%d, %d)", (int)m_UBO.screenSize.x, (int)m_UBO.screenSize.y);
@@ -436,6 +437,19 @@ void PostProcess::update(glm::ivec2 screenSize)
         lastSampleCount != m_sampleCount ||
         lastGtaoResolution != m_gtaoResolutionFactor)
     {
+        if (m_intermediateTexture)
+            SDL_ReleaseGPUTexture(Utils::device, m_intermediateTexture);
+
+        SDL_GPUTextureCreateInfo colorInfo{};
+        colorInfo.format = SDL_GetGPUSwapchainTextureFormat(Utils::device, Utils::window);
+        colorInfo.width = screenSize.x;
+        colorInfo.height = screenSize.y;
+        colorInfo.num_levels = 1;
+        colorInfo.type = SDL_GPU_TEXTURETYPE_2D;
+        colorInfo.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        colorInfo.sample_count = SDL_GPUSampleCount::SDL_GPU_SAMPLECOUNT_1;
+        m_intermediateTexture = SDL_CreateGPUTexture(Utils::device, &colorInfo);
+
         if (m_msaaColorTexture)
             SDL_ReleaseGPUTexture(Utils::device, m_msaaColorTexture);
         if (m_msaaDepthTexture)
@@ -904,21 +918,23 @@ void PostProcess::runSMAA(SDL_GPUCommandBuffer *cmd)
     SDL_EndGPURenderPass(neighborPass);
 }
 
-void PostProcess::postProcess(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTexture *swapchainTexture)
+void PostProcess::postProcess(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTexture *swapchainTexture, glm::vec2 swapchainSize)
 {
-    SDL_GPUColorTargetInfo finalTarget{};
-    finalTarget.texture = swapchainTexture;
-    finalTarget.load_op = SDL_GPU_LOADOP_CLEAR;
-    finalTarget.store_op = SDL_GPU_STOREOP_STORE;
-    finalTarget.clear_color = {0.f, 0.f, 0.f, 1.f};
+    // 1: Render Post-Process effects to Intermediate Texture
+
+    SDL_GPUColorTargetInfo intermediateTarget{};
+    intermediateTarget.texture = m_intermediateTexture;
+    intermediateTarget.load_op = SDL_GPU_LOADOP_DONT_CARE;
+    intermediateTarget.store_op = SDL_GPU_STOREOP_STORE;
+    intermediateTarget.clear_color = {0.f, 0.f, 0.f, 1.f};
 
     SDL_GPUTexture *color = m_colorTexture;
     if (m_aaMode == AA_SMAA)
         color = m_smaaColorTex;
 
-    SDL_GPURenderPass *finalPass = SDL_BeginGPURenderPass(commandBuffer, &finalTarget, 1, nullptr);
+    SDL_GPURenderPass *intermediatePass = SDL_BeginGPURenderPass(commandBuffer, &intermediateTarget, 1, nullptr);
     {
-        SDL_BindGPUGraphicsPipeline(finalPass, m_postProcessPipeline);
+        SDL_BindGPUGraphicsPipeline(intermediatePass, m_postProcessPipeline);
 
         SDL_GPUTextureSamplerBinding inputs[4] =
             {
@@ -927,13 +943,29 @@ void PostProcess::postProcess(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTextur
                 {m_gtaoBlur1Texture, Utils::baseSampler},
                 {m_lutTex, m_smaaLutSampler},
             };
-        SDL_BindGPUFragmentSamplers(finalPass, 0, inputs, 4);
+        SDL_BindGPUFragmentSamplers(intermediatePass, 0, inputs, 4);
 
         SDL_PushGPUFragmentUniformData(commandBuffer, 0, &m_UBO, sizeof(m_UBO));
 
-        SDL_DrawGPUPrimitives(finalPass, 3, 1, 0, 0);
+        SDL_DrawGPUPrimitives(intermediatePass, 3, 1, 0, 0);
     }
-    SDL_EndGPURenderPass(finalPass);
+    SDL_EndGPURenderPass(intermediatePass);
+
+    // 2: Blit Intermediate Result to Swapchain
+
+    SDL_GPUBlitInfo blitInfo{};
+    blitInfo.source.texture = m_intermediateTexture;
+    blitInfo.source.w = m_UBO.screenSize.x;
+    blitInfo.source.h = m_UBO.screenSize.y;
+
+    blitInfo.destination.texture = swapchainTexture;
+    blitInfo.destination.w = swapchainSize.x;
+    blitInfo.destination.h = swapchainSize.y;
+
+    blitInfo.filter = SDL_GPU_FILTER_LINEAR;
+    blitInfo.load_op = SDL_GPU_LOADOP_DONT_CARE;
+
+    SDL_BlitGPUTexture(commandBuffer, &blitInfo);
 }
 
 void PostProcess::loadSmaaLuts()

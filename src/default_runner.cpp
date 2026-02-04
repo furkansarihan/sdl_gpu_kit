@@ -282,7 +282,7 @@ SDL_AppResult DefaultRunner::Iterate()
     m_postProcess->downsample(commandBuffer);
     m_postProcess->upsample(commandBuffer);
     m_postProcess->runSMAA(commandBuffer);
-    m_postProcess->postProcess(commandBuffer, swapchainTexture);
+    m_postProcess->postProcess(commandBuffer, swapchainTexture, {m_width, m_height});
 
     // UI
     m_rootUI->render(commandBuffer, swapchainTexture);

@@ -98,8 +98,10 @@ public:
 
     SMAAUniforms m_smaaUniforms;
     AntiAliasingMode m_aaMode;
+    bool m_uiDefaultOpen = true;
 
     SDL_GPUSampler *m_clampedSampler = nullptr;
+    SDL_GPUTexture *m_intermediateTexture = nullptr;
     SDL_GPUTexture *m_msaaColorTexture = nullptr;
     SDL_GPUTexture *m_msaaDepthTexture = nullptr;
     SDL_GPUTexture *m_colorTexture = nullptr;
@@ -143,7 +145,7 @@ public:
     SDL_GPUGraphicsPipeline *m_smaaEdgePipeline = nullptr;
     SDL_GPUGraphicsPipeline *m_smaaBlendPipeline = nullptr;
     SDL_GPUGraphicsPipeline *m_smaaNeighborPipeline = nullptr;
-    
+
     // LUT
     SDL_GPUTexture *m_lutTex = nullptr;
 
@@ -162,7 +164,7 @@ public:
         float nearPlane,
         float farPlane);
     void runSMAA(SDL_GPUCommandBuffer *cmd);
-    void postProcess(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTexture *swapchainTexture);
+    void postProcess(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTexture *swapchainTexture, glm::vec2 swapchainSize);
 
     void loadSmaaLuts();
     void loadSmaaTextureFromDDS(SDL_GPUTexture **textureOut, const char *filepath, SDL_GPUTextureFormat format);

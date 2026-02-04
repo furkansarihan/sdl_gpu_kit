@@ -123,6 +123,7 @@ public:
 
     FragmentUniforms m_fragmentUniforms;
     FogUniforms m_fogUBO;
+    bool m_uiDefaultOpen = true;
 
     SDL_GPUDevice *m_device;
     SDL_Window *m_window;
