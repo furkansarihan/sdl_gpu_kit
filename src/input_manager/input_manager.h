@@ -61,6 +61,9 @@ public:
     bool isGamepadButtonDown(SDL_JoystickID id, Uint8 button) const;
     Sint16 getGamepadAxis(SDL_JoystickID id, Uint8 axis) const;
     const std::vector<SDL_JoystickID> &getConnectedGamepads() const;
+    std::vector<SDL_JoystickID> getPhysicalGamepads() const;
+    std::vector<SDL_JoystickID> getVirtualGamepads() const;
+    SDL_Joystick *getUnderlyingJoystick(SDL_JoystickID id) const;
 
 private:
     // Private constructor for singleton

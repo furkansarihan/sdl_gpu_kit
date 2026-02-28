@@ -1,6 +1,9 @@
 #include "input_manager.h"
-#include <SDL3/SDL_scancode.h>
+
 #include <algorithm>
+
+#include <SDL3/SDL_joystick.h>
+#include <SDL3/SDL_scancode.h>
 
 InputManager::~InputManager()
 {
@@ -155,6 +158,38 @@ Sint16 InputManager::getGamepadAxis(SDL_JoystickID id, Uint8 axis) const
 const std::vector<SDL_JoystickID> &InputManager::getConnectedGamepads() const
 {
     return connectedGamepadIds;
+}
+
+std::vector<SDL_JoystickID> InputManager::getPhysicalGamepads() const
+{
+    std::vector<SDL_JoystickID> result;
+    for (SDL_JoystickID id : connectedGamepadIds)
+    {
+        if (!SDL_IsJoystickVirtual(id))
+            result.push_back(id);
+    }
+    return result;
+}
+
+std::vector<SDL_JoystickID> InputManager::getVirtualGamepads() const
+{
+    std::vector<SDL_JoystickID> result;
+    for (SDL_JoystickID id : connectedGamepadIds)
+    {
+        if (SDL_IsJoystickVirtual(id))
+            result.push_back(id);
+    }
+    return result;
+}
+
+SDL_Joystick *InputManager::getUnderlyingJoystick(SDL_JoystickID id) const
+{
+    auto it = gamepads.find(id);
+    if (it != gamepads.end() && it->second)
+    {
+        return SDL_GetGamepadJoystick(it->second);
+    }
+    return nullptr;
 }
 
 void InputManager::openGamepad(SDL_JoystickID id)
