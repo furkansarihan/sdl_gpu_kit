@@ -54,6 +54,100 @@ void ResourceManager::dispose(const Texture &texture)
         SDL_ReleaseGPUTexture(Utils::device, texture.id);
 }
 
+ModelData *ResourceManager::copyModelGeometry(const ModelData *source)
+{
+    ModelData *copy = new ModelData();
+
+    // Deep copy nodes (own transforms per instance)
+    copy->nodes = source->nodes;
+
+    // Share materials, textures, animations (not owned by copy)
+    copy->materials = source->materials;
+    copy->textures = source->textures;
+    copy->animations = source->animations;
+
+    // Deep copy meshes: clone vertex data + create new GPU vertex buffers
+    // Share index buffers
+    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(m_device);
+    SDL_GPUCopyPass *copyPass = SDL_BeginGPUCopyPass(cmd);
+
+    copy->meshes.resize(source->meshes.size());
+    for (size_t meshIdx = 0; meshIdx < source->meshes.size(); ++meshIdx)
+    {
+        const MeshData &srcMesh = source->meshes[meshIdx];
+        MeshData &dstMesh = copy->meshes[meshIdx];
+
+        dstMesh.primitives.resize(srcMesh.primitives.size());
+        for (size_t primIdx = 0; primIdx < srcMesh.primitives.size(); ++primIdx)
+        {
+            const PrimitiveData &srcPrim = srcMesh.primitives[primIdx];
+            PrimitiveData &dstPrim = dstMesh.primitives[primIdx];
+
+            // Copy metadata
+            dstPrim.name = srcPrim.name;
+            dstPrim.material = srcPrim.material; // shared pointer
+
+            // Deep copy CPU vertex data
+            dstPrim.vertices = srcPrim.vertices;
+
+            // Copy bounding volumes (will be recomputed if vertices change)
+            dstPrim.aabbMin = srcPrim.aabbMin;
+            dstPrim.aabbMax = srcPrim.aabbMax;
+            dstPrim.sphereCenter = srcPrim.sphereCenter;
+            dstPrim.sphereRadius = srcPrim.sphereRadius;
+
+            // Share index buffer (topology doesn't change)
+            dstPrim.indices = srcPrim.indices;
+            dstPrim.indexBuffer = srcPrim.indexBuffer;
+            dstPrim.indexTransferBuffer = nullptr; // not owned
+
+            // Create new GPU vertex buffer
+            Uint32 vertexDataSize = static_cast<Uint32>(dstPrim.vertices.size() * sizeof(Vertex));
+
+            SDL_GPUBufferCreateInfo vertexBufferInfo{};
+            vertexBufferInfo.size = vertexDataSize;
+            vertexBufferInfo.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
+            dstPrim.vertexBuffer = SDL_CreateGPUBuffer(m_device, &vertexBufferInfo);
+
+            SDL_GPUTransferBufferCreateInfo vertexTransferInfo{};
+            vertexTransferInfo.size = vertexDataSize;
+            vertexTransferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+            dstPrim.vertexTransferBuffer = SDL_CreateGPUTransferBuffer(m_device, &vertexTransferInfo);
+
+            Vertex *mapped = (Vertex *)SDL_MapGPUTransferBuffer(m_device, dstPrim.vertexTransferBuffer, false);
+            SDL_memcpy(mapped, dstPrim.vertices.data(), vertexDataSize);
+            SDL_UnmapGPUTransferBuffer(m_device, dstPrim.vertexTransferBuffer);
+
+            SDL_GPUTransferBufferLocation vertexLocation = {dstPrim.vertexTransferBuffer, 0};
+            SDL_GPUBufferRegion vertexRegion = {dstPrim.vertexBuffer, 0, vertexDataSize};
+            SDL_UploadToGPUBuffer(copyPass, &vertexLocation, &vertexRegion, true);
+        }
+    }
+
+    SDL_EndGPUCopyPass(copyPass);
+    SDL_GPUFence *fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+    SDL_WaitForGPUFences(m_device, true, &fence, 1);
+    SDL_ReleaseGPUFence(m_device, fence);
+
+    return copy;
+}
+
+void ResourceManager::disposeCopy(ModelData *copy)
+{
+    // Only release vertex buffers (owned by the copy)
+    // Index buffers, materials, textures, animations are shared with the original
+    for (auto &mesh : copy->meshes)
+    {
+        for (auto &prim : mesh.primitives)
+        {
+            if (prim.vertexBuffer)
+                SDL_ReleaseGPUBuffer(Utils::device, prim.vertexBuffer);
+        }
+    }
+
+    delete copy;
+}
+
 glm::mat4 GetNodeTransform(const tinygltf::Node &node)
 {
     glm::mat4 transform(1.0f);

@@ -160,6 +160,9 @@ public:
     void dispose(ModelData *model);
     void dispose(const Texture &texture);
 
+    ModelData *copyModelGeometry(const ModelData *source);
+    void disposeCopy(ModelData *copy);
+
     ModelData *loadModel(const std::string &path);
     Texture loadTextureFromMemory(const TextureParams &params, void *buffer, size_t bufferSize);
     Texture loadTextureFromFile(const TextureParams &params, const std::string &path);
