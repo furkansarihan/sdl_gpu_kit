@@ -13,6 +13,8 @@ layout(binding = 0) uniform PostProcessFragmentUBO {
     int fxaaEnabled;
     int lutEnabled;
     float lutIntensity;
+
+    int ssaoEnabled;
 } ubo;
 
 layout(binding = 0) uniform sampler2D sceneTex;
@@ -126,8 +128,10 @@ void main() {
     }
 
     // SSAO
-    float aoFactor = texture(ssaoTex, uv).r;
-    color *= aoFactor; 
+    if (ubo.ssaoEnabled == 1) {
+        float aoFactor = texture(ssaoTex, uv).r;
+        color *= aoFactor;
+    }
 
     // Bloom
     vec3 bloomRaw = texture(bloomTex, uv).rgb;

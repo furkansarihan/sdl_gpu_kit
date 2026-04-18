@@ -17,6 +17,7 @@ struct PostProcessFragmentUBO
     Uint32 fxaaEnabled;
     Uint32 lutEnabled;
     float lutIntensity;
+    Uint32 ssaoEnabled;
 };
 
 struct BloomDownsampleUBO

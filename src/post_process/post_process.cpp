@@ -183,6 +183,7 @@ PostProcess::PostProcess(SDL_GPUSampleCount sampleCount)
     m_UBO.fxaaEnabled = 0;
     m_UBO.lutEnabled = 0;
     m_UBO.lutIntensity = 1.f;
+    m_UBO.ssaoEnabled = 1;
     m_upsampleUBO.filterRadius = 1.;
     m_downsampleUBO.highlight = 100.0f;
 
@@ -703,6 +704,9 @@ void PostProcess::computeGTAO(
     float nearPlane,
     float farPlane)
 {
+    if (m_UBO.ssaoEnabled == 0)
+        return;
+
     glm::mat4 invProj = glm::inverse(projectionMatrix);
 
     m_gtaoParams.resolution = glm::vec4(
