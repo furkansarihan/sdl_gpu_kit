@@ -1,6 +1,8 @@
 #include "resource_manager.h"
 
 #include <cstddef>
+#include <future>
+#include <vector>
 
 #include <SDL3/SDL_gpu.h>
 #include <SDL3/SDL_log.h>
@@ -13,6 +15,31 @@
 #include "stb_image.h"
 
 #include "../utils/utils.h"
+
+// Stub image loader for tinygltf — tells tinygltf to NOT decode images itself
+static bool TinyGltfStubImageLoader(tinygltf::Image *image, const int image_idx,
+                                    std::string *err, std::string *warn,
+                                    int req_width, int req_height,
+                                    const unsigned char *bytes, int size,
+                                    void *user_data)
+{
+    (void)image_idx;
+    (void)err;
+    (void)warn;
+    (void)req_width;
+    (void)req_height;
+    (void)bytes;
+    (void)size;
+    (void)user_data;
+    // Leave image->image empty; we'll decode from bufferView/URI ourselves.
+    // Must return true or tinygltf treats it as a load failure.
+    image->width = -1;
+    image->height = -1;
+    image->component = -1;
+    image->bits = -1;
+    image->pixel_type = -1;
+    return true;
+}
 
 ResourceManager::ResourceManager(SDL_GPUDevice *device)
     : m_device(device)
@@ -215,8 +242,6 @@ void ProcessNode(std::vector<NodeData> &nodes, const tinygltf::Model &model, int
 
     nodes.push_back(nodeData);
 
-    SDL_Log("Node '%s': mesh=%d", node.name.c_str(), node.mesh);
-
     // Process children recursively
     for (int childIndex : node.children)
     {
@@ -293,6 +318,9 @@ ModelData *ResourceManager::loadModel(const std::string &path)
     std::string err, warn;
     bool ret = false;
 
+    // Skip tinygltf's built-in image decode
+    loader.SetImageLoader(TinyGltfStubImageLoader, nullptr);
+
     // Explicitly check the file extension
     std::string extension = Utils::getFileExtension(path);
 
@@ -325,7 +353,7 @@ ModelData *ResourceManager::loadModel(const std::string &path)
         return NULL;
     }
 
-    SDL_Log("Loaded GLTF: %s (%zu meshes, %zu materials, %zu textures)",
+    SDL_Log("Loaded: %s (%zu meshes, %zu materials, %zu textures)",
             filename, model.meshes.size(), model.materials.size(), model.textures.size());
 
     ModelData *modelData = new ModelData();
@@ -352,75 +380,242 @@ ModelData *ResourceManager::loadModel(const std::string &path)
             textureFormats[emissiveIndex] = TextureDataType::UnsignedByteSRGB;
     }
 
-    for (size_t i = 0; i < model.textures.size(); ++i)
+    // Parallel texture decode + batched GPU upload.
+
+    struct DecodedImage
+    {
+        stbi_uc *pixels = nullptr; // RGBA8, must be freed with stbi_image_free
+        int width = 0;
+        int height = 0;
+        TextureParams params;
+        bool ok = false;
+    };
+
+    const size_t textureCount = model.textures.size();
+    std::vector<std::future<DecodedImage>> decodeFutures;
+    decodeFutures.reserve(textureCount);
+
+    // A. Launch a decode task per texture.
+    for (size_t i = 0; i < textureCount; ++i)
     {
         const auto &gltfTex = model.textures[i];
-        if (gltfTex.source < 0 || gltfTex.source >= model.images.size())
-        {
-            SDL_LogWarn(0, "Texture %zu has invalid source index", i);
-            modelData->textures.push_back(Texture{}); // Push empty texture
-            continue;
-        }
 
-        const auto &gltfImage = model.images[gltfTex.source];
         TextureParams params;
         params.dataType = (i < textureFormats.size()) ? textureFormats[i] : TextureDataType::UnsignedByteSRGB;
         params.generateMipmaps = true;
         params.sample = true;
 
-        Texture texture;
-        bool loaded = false;
-
-        if (!gltfImage.image.empty())
+        if (gltfTex.source < 0 || gltfTex.source >= (int)model.images.size())
         {
-            // Image is raw uncompressed data
-            texture.width = gltfImage.width;
-            texture.height = gltfImage.height;
-            texture.component = gltfImage.component;
-
-            // Need to convert raw data to match expected format
-            Uint32 bytesPerComponent = 1;
-            if (params.dataType == TextureDataType::Float16)
-                bytesPerComponent = 2;
-            else if (params.dataType == TextureDataType::Float32)
-                bytesPerComponent = 4;
-
-            loaded = convertAndLoadTexture(texture, params, (void *)gltfImage.image.data(), gltfImage.component);
-            SDL_Log("Texture %zu: Loaded from raw data (format: %d, size: %dx%d, components: %d)",
-                    i, params.dataType, texture.width, texture.height, texture.component);
+            SDL_LogWarn(0, "Texture %zu has invalid source index", i);
+            // Push a future that immediately returns a failed result so the
+            // result vector stays index-aligned with modelData->textures.
+            std::promise<DecodedImage> p;
+            p.set_value(DecodedImage{});
+            decodeFutures.push_back(p.get_future());
+            continue;
         }
-        else if (gltfImage.bufferView >= 0)
+
+        const auto &gltfImage = model.images[gltfTex.source];
+
+        if (gltfImage.bufferView >= 0)
         {
-            // Image is compressed in a buffer (e.g., PNG/JPG in a GLB)
             const auto &view = model.bufferViews[gltfImage.bufferView];
             const auto &buffer = model.buffers[view.buffer];
             const stbi_uc *dataPtr = buffer.data.data() + view.byteOffset;
-            texture = loadTextureFromMemory(params, (void *)dataPtr, view.byteLength);
-            loaded = (texture.id != nullptr);
-            SDL_Log("Texture %zu: Loaded from buffer view (format: %d, size: %dx%d, components: %d)",
-                    i, params.dataType, texture.width, texture.height, texture.component);
+            size_t dataLen = view.byteLength;
+
+            decodeFutures.push_back(
+                std::async(
+                    std::launch::async,
+                    [dataPtr, dataLen, params]() -> DecodedImage {
+                        DecodedImage out;
+                        out.params = params;
+                        int origComp = 0;
+                        const int reqComp = 4; // always decode to RGBA
+                        if (params.dataType == TextureDataType::Float16 ||
+                            params.dataType == TextureDataType::Float32)
+                        {
+                            out.pixels = reinterpret_cast<stbi_uc *>(
+                                stbi_loadf_from_memory(dataPtr, (int)dataLen,
+                                                       &out.width, &out.height,
+                                                       &origComp, reqComp));
+                        }
+                        else
+                        {
+                            out.pixels = stbi_load_from_memory(dataPtr, (int)dataLen,
+                                                               &out.width, &out.height,
+                                                               &origComp, reqComp);
+                        }
+                        out.ok = (out.pixels != nullptr);
+                        return out;
+                    }));
         }
         else if (!gltfImage.uri.empty())
         {
-            // Image is an external file
             std::string imagePath = baseDir + "/" + gltfImage.uri;
-            texture = loadTextureFromFile(params, imagePath);
-            loaded = (texture.id != nullptr);
-            SDL_Log("Texture %zu: Loaded from URI '%s' (format: %d, size: %dx%d, components: %d)",
-                    i, gltfImage.uri.c_str(), params.dataType, texture.width, texture.height, texture.component);
+            decodeFutures.push_back(
+                std::async(
+                    std::launch::async,
+                    [imagePath, params]() -> DecodedImage {
+                        DecodedImage out;
+                        out.params = params;
+                        int origComp = 0;
+                        const int reqComp = 4;
+                        if (params.dataType == TextureDataType::Float16 ||
+                            params.dataType == TextureDataType::Float32)
+                        {
+                            out.pixels = reinterpret_cast<stbi_uc *>(
+                                stbi_loadf(imagePath.c_str(),
+                                           &out.width, &out.height,
+                                           &origComp, reqComp));
+                        }
+                        else
+                        {
+                            out.pixels = stbi_load(imagePath.c_str(),
+                                                   &out.width, &out.height,
+                                                   &origComp, reqComp);
+                        }
+                        out.ok = (out.pixels != nullptr);
+                        return out;
+                    }));
         }
-
         else
         {
             SDL_LogWarn(0, "Texture %zu has no valid image data source", i);
+            std::promise<DecodedImage> p;
+            p.set_value(DecodedImage{});
+            decodeFutures.push_back(p.get_future());
         }
+    }
 
-        if (!loaded)
+    // B. Join all decode tasks and compute total upload size.
+    std::vector<DecodedImage> decoded(textureCount);
+    size_t totalBytes = 0;
+    std::vector<size_t> uploadOffsets(textureCount, 0);
+    std::vector<Uint32> uploadSizes(textureCount, 0);
+
+    for (size_t i = 0; i < textureCount; ++i)
+    {
+        decoded[i] = decodeFutures[i].get();
+        if (!decoded[i].ok)
+            continue;
+
+        Uint32 bpc = 1;
+        if (decoded[i].params.dataType == TextureDataType::Float16)
+            bpc = 2;
+        else if (decoded[i].params.dataType == TextureDataType::Float32)
+            bpc = 4;
+
+        // 4 = always RGBA after stbi req_comp=4
+        Uint32 sz = (Uint32)decoded[i].width * (Uint32)decoded[i].height * 4 * bpc;
+        uploadOffsets[i] = totalBytes;
+        uploadSizes[i] = sz;
+        totalBytes += sz;
+    }
+
+    // C. Single transfer buffer for all textures.
+    SDL_GPUTransferBuffer *batchTransfer = nullptr;
+    Uint8 *mapped = nullptr;
+    if (totalBytes > 0)
+    {
+        SDL_GPUTransferBufferCreateInfo tbInfo{};
+        tbInfo.size = (Uint32)totalBytes;
+        tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        batchTransfer = SDL_CreateGPUTransferBuffer(m_device, &tbInfo);
+        if (batchTransfer)
         {
-            SDL_LogError(0, "Failed to load texture %zu", i);
+            mapped = (Uint8 *)SDL_MapGPUTransferBuffer(m_device, batchTransfer, false);
+        }
+    }
+
+    // D. Create GPU textures, copy decoded bytes into the transfer buffer,
+    //    and record uploads into the already-open copy pass.
+    modelData->textures.resize(textureCount);
+    for (size_t i = 0; i < textureCount; ++i)
+    {
+        Texture texture; // zero-init
+        DecodedImage &dec = decoded[i];
+
+        if (!dec.ok || !mapped)
+        {
+            if (dec.ok)
+            {
+                SDL_LogError(0, "Failed to create batch transfer buffer for texture %zu", i);
+                stbi_image_free(dec.pixels);
+            }
+            else
+            {
+                SDL_LogError(0, "Failed to decode texture %zu", i);
+            }
+            modelData->textures[i] = texture;
+            continue;
         }
 
-        modelData->textures.push_back(texture);
+        texture.width = dec.width;
+        texture.height = dec.height;
+        texture.component = 4;
+
+        // Pick GPU format from TextureParams.
+        SDL_GPUTextureCreateInfo texInfo{};
+        texInfo.type = SDL_GPU_TEXTURETYPE_2D;
+        switch (dec.params.dataType)
+        {
+        case TextureDataType::UnsignedByte:
+            texInfo.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+            break;
+        case TextureDataType::UnsignedByteSRGB:
+            texInfo.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB;
+            break;
+        case TextureDataType::Float16:
+            texInfo.format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
+            break;
+        case TextureDataType::Float32:
+            texInfo.format = SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT;
+            break;
+        }
+        texInfo.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        texInfo.width = texture.width;
+        texInfo.height = texture.height;
+        texInfo.layer_count_or_depth = 1;
+        texInfo.num_levels = dec.params.generateMipmaps
+                                 ? CalcMipLevels(texture.width, texture.height)
+                                 : 1;
+
+        texture.id = SDL_CreateGPUTexture(m_device, &texInfo);
+        if (!texture.id)
+        {
+            SDL_LogError(0, "Failed to create GPU texture %zu", i);
+            stbi_image_free(dec.pixels);
+            modelData->textures[i] = texture;
+            continue;
+        }
+
+        // Copy decoded bytes into our shared transfer buffer at the reserved offset.
+        SDL_memcpy(mapped + uploadOffsets[i], dec.pixels, uploadSizes[i]);
+        stbi_image_free(dec.pixels);
+
+        // Record the upload.
+        SDL_GPUTextureTransferInfo tti{};
+        tti.transfer_buffer = batchTransfer;
+        tti.offset = (Uint32)uploadOffsets[i];
+
+        SDL_GPUTextureRegion region{};
+        region.texture = texture.id;
+        region.w = texture.width;
+        region.h = texture.height;
+        region.d = 1;
+
+        SDL_UploadToGPUTexture(copyPass, &tti, &region, false);
+
+        modelData->textures[i] = texture;
+    }
+
+    if (batchTransfer)
+    {
+        SDL_UnmapGPUTransferBuffer(m_device, batchTransfer);
+        // Defer release until after submit (batch is still referenced by copyPass).
+        textureTransferBuffers.push_back(batchTransfer);
     }
 
     // --- 2. Load Materials ---
@@ -760,49 +955,130 @@ ModelData *ResourceManager::loadModel(const std::string &path)
                 CalculateTangents(primData.vertices, primData.indices);
             }
 
-            // --- Create GPU Buffers (Vertices) ---
-            SDL_GPUBufferCreateInfo vertexBufferInfo{};
-            vertexBufferInfo.size = primData.vertices.size() * sizeof(Vertex);
-            vertexBufferInfo.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
-            primData.vertexBuffer = SDL_CreateGPUBuffer(m_device, &vertexBufferInfo);
-
-            SDL_GPUTransferBufferCreateInfo vertexTransferInfo{};
-            vertexTransferInfo.size = vertexBufferInfo.size;
-            vertexTransferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-            primData.vertexTransferBuffer = SDL_CreateGPUTransferBuffer(m_device, &vertexTransferInfo);
-            Vertex *data = (Vertex *)SDL_MapGPUTransferBuffer(m_device, primData.vertexTransferBuffer, false);
-            SDL_memcpy(data, primData.vertices.data(), vertexBufferInfo.size);
-            SDL_UnmapGPUTransferBuffer(m_device, primData.vertexTransferBuffer);
-
-            SDL_GPUTransferBufferLocation vertexLocation = {primData.vertexTransferBuffer, 0};
-            SDL_GPUBufferRegion vertexRegion = {primData.vertexBuffer, 0, vertexBufferInfo.size};
-            SDL_UploadToGPUBuffer(copyPass, &vertexLocation, &vertexRegion, true); // Release transfer buffer
-
-            // --- Create GPU Buffers (Indices) ---
-            if (!primData.indices.empty())
-            {
-                SDL_GPUBufferCreateInfo indexBufferInfo{};
-                indexBufferInfo.size = primData.indices.size() * sizeof(uint32_t);
-                indexBufferInfo.usage = SDL_GPU_BUFFERUSAGE_INDEX;
-                primData.indexBuffer = SDL_CreateGPUBuffer(m_device, &indexBufferInfo);
-
-                SDL_GPUTransferBufferCreateInfo indexTransferInfo{};
-                indexTransferInfo.size = indexBufferInfo.size;
-                indexTransferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-                primData.indexTransferBuffer = SDL_CreateGPUTransferBuffer(m_device, &indexTransferInfo);
-                uint32_t *indexMap = (uint32_t *)SDL_MapGPUTransferBuffer(m_device, primData.indexTransferBuffer, false);
-                SDL_memcpy(indexMap, primData.indices.data(), indexBufferInfo.size);
-                SDL_UnmapGPUTransferBuffer(m_device, primData.indexTransferBuffer);
-
-                SDL_GPUTransferBufferLocation indexLocation = {primData.indexTransferBuffer, 0};
-                SDL_GPUBufferRegion indexRegion = {primData.indexBuffer, 0, indexBufferInfo.size};
-                SDL_UploadToGPUBuffer(copyPass, &indexLocation, &indexRegion, true); // Release transfer buffer
-            }
+            // NOTE: GPU vertex/index buffer creation and upload are deferred
+            // until after all primitives are processed
 
             meshData.primitives.push_back(std::move(primData));
         }
 
         modelData->meshes.push_back(meshData);
+    }
+
+    // --- 4b. Batched geometry upload ---
+
+    struct GeomUpload
+    {
+        PrimitiveData *prim; // points into modelData->meshes
+        size_t vertexOffset; // byte offset in vertex batch
+        Uint32 vertexBytes;
+        size_t indexOffset; // byte offset in index batch (valid only if indexBytes > 0)
+        Uint32 indexBytes;
+    };
+
+    std::vector<GeomUpload> uploads;
+    size_t totalVertexBytes = 0;
+    size_t totalIndexBytes = 0;
+
+    for (auto &meshData : modelData->meshes)
+    {
+        for (auto &prim : meshData.primitives)
+        {
+            GeomUpload u{};
+            u.prim = &prim;
+
+            u.vertexBytes = (Uint32)(prim.vertices.size() * sizeof(Vertex));
+            u.vertexOffset = totalVertexBytes;
+            totalVertexBytes += u.vertexBytes;
+
+            if (!prim.indices.empty())
+            {
+                u.indexBytes = (Uint32)(prim.indices.size() * sizeof(uint32_t));
+                u.indexOffset = totalIndexBytes;
+                totalIndexBytes += u.indexBytes;
+            }
+
+            uploads.push_back(u);
+        }
+    }
+
+    // Create the two batch transfer buffers (only if non-empty).
+    SDL_GPUTransferBuffer *vertexBatchTransfer = nullptr;
+    SDL_GPUTransferBuffer *indexBatchTransfer = nullptr;
+    Uint8 *vertexMapped = nullptr;
+    Uint8 *indexMapped = nullptr;
+
+    if (totalVertexBytes > 0)
+    {
+        SDL_GPUTransferBufferCreateInfo tbInfo{};
+        tbInfo.size = (Uint32)totalVertexBytes;
+        tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        vertexBatchTransfer = SDL_CreateGPUTransferBuffer(m_device, &tbInfo);
+        if (vertexBatchTransfer)
+            vertexMapped = (Uint8 *)SDL_MapGPUTransferBuffer(m_device, vertexBatchTransfer, false);
+    }
+
+    if (totalIndexBytes > 0)
+    {
+        SDL_GPUTransferBufferCreateInfo tbInfo{};
+        tbInfo.size = (Uint32)totalIndexBytes;
+        tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        indexBatchTransfer = SDL_CreateGPUTransferBuffer(m_device, &tbInfo);
+        if (indexBatchTransfer)
+            indexMapped = (Uint8 *)SDL_MapGPUTransferBuffer(m_device, indexBatchTransfer, false);
+    }
+
+    // Copy CPU data into the shared transfer buffers, create the per-primitive
+    // GPU buffers, and record uploads.
+    for (const auto &u : uploads)
+    {
+        PrimitiveData &prim = *u.prim;
+
+        // Vertex buffer.
+        if (u.vertexBytes > 0 && vertexMapped)
+        {
+            SDL_memcpy(vertexMapped + u.vertexOffset, prim.vertices.data(), u.vertexBytes);
+
+            SDL_GPUBufferCreateInfo bi{};
+            bi.size = u.vertexBytes;
+            bi.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
+            prim.vertexBuffer = SDL_CreateGPUBuffer(m_device, &bi);
+
+            if (prim.vertexBuffer)
+            {
+                SDL_GPUTransferBufferLocation src{vertexBatchTransfer, (Uint32)u.vertexOffset};
+                SDL_GPUBufferRegion dst{prim.vertexBuffer, 0, u.vertexBytes};
+                SDL_UploadToGPUBuffer(copyPass, &src, &dst, false);
+            }
+        }
+
+        // Index buffer (optional).
+        if (u.indexBytes > 0 && indexMapped)
+        {
+            SDL_memcpy(indexMapped + u.indexOffset, prim.indices.data(), u.indexBytes);
+
+            SDL_GPUBufferCreateInfo bi{};
+            bi.size = u.indexBytes;
+            bi.usage = SDL_GPU_BUFFERUSAGE_INDEX;
+            prim.indexBuffer = SDL_CreateGPUBuffer(m_device, &bi);
+
+            if (prim.indexBuffer)
+            {
+                SDL_GPUTransferBufferLocation src{indexBatchTransfer, (Uint32)u.indexOffset};
+                SDL_GPUBufferRegion dst{prim.indexBuffer, 0, u.indexBytes};
+                SDL_UploadToGPUBuffer(copyPass, &src, &dst, false);
+            }
+        }
+    }
+
+    if (vertexBatchTransfer)
+    {
+        SDL_UnmapGPUTransferBuffer(m_device, vertexBatchTransfer);
+        textureTransferBuffers.push_back(vertexBatchTransfer); // reuse the cleanup list
+    }
+    if (indexBatchTransfer)
+    {
+        SDL_UnmapGPUTransferBuffer(m_device, indexBatchTransfer);
+        textureTransferBuffers.push_back(indexBatchTransfer);
     }
 
     // Load animations
