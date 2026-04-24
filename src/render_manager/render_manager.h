@@ -103,7 +103,7 @@ public:
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,
         const glm::mat4 &viewProj,
-        const Frustum &frustum) {};    
+        const Frustum &frustum) {};
     virtual void renderAnimationShadow(
         SDL_GPUCommandBuffer *cmd,
         SDL_GPURenderPass *pass,
@@ -118,7 +118,8 @@ public:
         SDL_GPUDevice *device,
         SDL_Window *window,
         ResourceManager *resourceManager,
-        SDL_GPUSampleCount sampleCount);
+        SDL_GPUSampleCount sampleCount,
+        int cubemapSize);
     ~RenderManager();
 
     FragmentUniforms m_fragmentUniforms;

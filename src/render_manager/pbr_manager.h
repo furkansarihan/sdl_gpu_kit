@@ -62,7 +62,7 @@ struct SunFragmentUBO
 class PbrManager
 {
 public:
-    PbrManager(ResourceManager *resourceManager);
+    PbrManager(ResourceManager *resourceManager, int cubemapSize = 128);
     ~PbrManager();
 
     ResourceManager *m_resourceManager;
@@ -73,7 +73,7 @@ public:
     int m_prefilterMipLevels = 5;
     int m_prefilterSize = 128;
     int m_irradianceSize = 64;
-    int m_cubemapSize = 1024;
+    int m_cubemapSize;
 
     SDL_GPUTexture *m_environmentTexture;
 

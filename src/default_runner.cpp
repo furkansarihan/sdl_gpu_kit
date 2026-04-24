@@ -83,10 +83,11 @@ SDL_AppResult DefaultRunner::Init(int argc, char **argv)
     Utils::window = m_window;
 
     SDL_GPUSampleCount msaaSampleCount = Utils::getClosestSupportedMSAA(SDL_GPU_SAMPLECOUNT_2);
+    int cubemapSize = 1024;
 
     // Initialize Managers
     m_resourceManager = new ResourceManager(m_device);
-    m_renderManager = new RenderManager(m_device, m_window, m_resourceManager, msaaSampleCount);
+    m_renderManager = new RenderManager(m_device, m_window, m_resourceManager, msaaSampleCount, cubemapSize);
     m_renderManager->updateResources(m_initWindowSize, msaaSampleCount);
     m_postProcess = new PostProcess(msaaSampleCount);
     m_postProcess->update(m_initWindowSize);

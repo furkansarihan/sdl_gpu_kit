@@ -12,7 +12,8 @@ RenderManager::RenderManager(
     SDL_GPUDevice *device,
     SDL_Window *window,
     ResourceManager *resourceManager,
-    SDL_GPUSampleCount sampleCount)
+    SDL_GPUSampleCount sampleCount,
+    int cubemapSize)
     : m_device(device),
       m_window(window),
       m_resourceManager(resourceManager),
@@ -21,7 +22,7 @@ RenderManager::RenderManager(
       m_baseSampler(nullptr),
       m_defaultTexture(nullptr)
 {
-    m_pbrManager = new PbrManager(m_resourceManager);
+    m_pbrManager = new PbrManager(m_resourceManager, cubemapSize);
     m_shadowManager = new ShadowManager();
 
     createDefaultResources();

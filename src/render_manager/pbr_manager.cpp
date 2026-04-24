@@ -8,8 +8,9 @@
 #include "../resource_manager/resource_manager.h"
 #include "../utils/utils.h"
 
-PbrManager::PbrManager(ResourceManager *resourceManager)
-    : m_resourceManager(resourceManager)
+PbrManager::PbrManager(ResourceManager *resourceManager, int cubemapSize)
+    : m_resourceManager(resourceManager),
+      m_cubemapSize(cubemapSize)
 {
     init();
     createSkyboxPipelines(Utils::device);
