@@ -393,6 +393,24 @@ void PbrManager::updateEnvironmentTexture(SDL_GPUTexture *environmentTexture)
         uniforms.projection = m_captureProjection;
         uniforms.model = glm::scale(glm::mat4(1.0), glm::vec3(1.f, -1.f, 1.f));
 
+        // Warm-up: touch every (face, mip)
+        for (unsigned int mip = 0; mip < 5; ++mip) // m_cubemapTexture has 5 mip levels
+        {
+            for (unsigned int i = 0; i < 6; ++i)
+            {
+                SDL_GPUColorTargetInfo warmup = {};
+                warmup.texture = m_cubemapTexture;
+                warmup.mip_level = mip;
+                warmup.layer_or_depth_plane = i;
+                warmup.load_op = SDL_GPU_LOADOP_CLEAR;
+                warmup.store_op = SDL_GPU_STOREOP_STORE;
+                warmup.clear_color = {0.0f, 0.0f, 0.0f, 1.0f};
+
+                SDL_GPURenderPass *p = SDL_BeginGPURenderPass(cmdbuf, &warmup, 1, nullptr);
+                SDL_EndGPURenderPass(p);
+            }
+        }
+
         for (unsigned int i = 0; i < 6; ++i)
         {
             colorTargetInfo.layer_or_depth_plane = i;
@@ -449,6 +467,21 @@ void PbrManager::updateIBL(SDL_GPUTexture *cubemapTexture)
         uniforms.projection = m_captureProjection;
         uniforms.model = glm::mat4(1.0);
 
+        // Warm-up
+        for (unsigned int i = 0; i < 6; ++i)
+        {
+            SDL_GPUColorTargetInfo warmup = {};
+            warmup.texture = m_irradianceTexture;
+            warmup.mip_level = 0;
+            warmup.layer_or_depth_plane = i;
+            warmup.load_op = SDL_GPU_LOADOP_CLEAR;
+            warmup.store_op = SDL_GPU_STOREOP_STORE;
+            warmup.clear_color = {0.0f, 0.0f, 0.0f, 1.0f};
+
+            SDL_GPURenderPass *p = SDL_BeginGPURenderPass(cmdbuf, &warmup, 1, nullptr);
+            SDL_EndGPURenderPass(p);
+        }
+
         for (unsigned int i = 0; i < 6; ++i)
         {
             colorTargetInfo.layer_or_depth_plane = i;
@@ -501,6 +534,24 @@ void PbrManager::updateIBL(SDL_GPUTexture *cubemapTexture)
         PrefilterUBO fragmentUniform;
         fragmentUniform.roughness = 0.5f;
         fragmentUniform.cubemapSize = (float)m_cubemapSize;
+
+        // Warm-up
+        for (unsigned int mip = 0; mip < m_prefilterMipLevels; ++mip)
+        {
+            for (unsigned int i = 0; i < 6; ++i)
+            {
+                SDL_GPUColorTargetInfo warmup = {};
+                warmup.texture = m_prefilterTexture;
+                warmup.mip_level = mip;
+                warmup.layer_or_depth_plane = i;
+                warmup.load_op = SDL_GPU_LOADOP_CLEAR;
+                warmup.store_op = SDL_GPU_STOREOP_STORE;
+                warmup.clear_color = {0.0f, 0.0f, 0.0f, 1.0f};
+
+                SDL_GPURenderPass *p = SDL_BeginGPURenderPass(cmdbuf, &warmup, 1, nullptr);
+                SDL_EndGPURenderPass(p);
+            }
+        }
 
         // Render to each mip level
         for (unsigned int mip = 0; mip < m_prefilterMipLevels; ++mip)
