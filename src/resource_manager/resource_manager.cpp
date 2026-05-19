@@ -340,7 +340,7 @@ ModelData *ResourceManager::loadModel(const std::string &path)
     {
         // Handle unknown or unsupported extension
         SDL_Log("Unsupported model file extension: %s", extension.c_str());
-        return NULL;
+        return nullptr;
     }
 
     if (!warn.empty())
@@ -350,11 +350,58 @@ ModelData *ResourceManager::loadModel(const std::string &path)
     if (!ret)
     {
         SDL_Log("Failed to load GLTF: %s", filename);
-        return NULL;
+        return nullptr;
     }
 
+    std::string baseDir = Utils::getBasePath(path);
+    return processGLTFModel(model, path, baseDir);
+}
+
+ModelData *ResourceManager::loadModelFromMemory(const unsigned char *data, unsigned int size, const std::string &extension, const std::string &baseDir)
+{
+    tinygltf::Model model;
+    tinygltf::TinyGLTF loader;
+    std::string err, warn;
+    bool ret = false;
+
+    // Skip tinygltf's built-in image decode
+    loader.SetImageLoader(TinyGltfStubImageLoader, nullptr);
+
+    if (extension == "glb")
+    {
+        SDL_Log("Loading GLB binary from memory (%u bytes)", size);
+        ret = loader.LoadBinaryFromMemory(&model, &err, &warn, data, size, baseDir);
+    }
+    else if (extension == "gltf")
+    {
+        SDL_Log("Loading GLTF ASCII from memory (%u bytes)", size);
+        // tinygltf expects a const char* for ASCII data
+        ret = loader.LoadASCIIFromString(&model, &err, &warn, reinterpret_cast<const char *>(data), size, baseDir);
+    }
+    else
+    {
+        SDL_Log("Unsupported model file extension: %s", extension.c_str());
+        return nullptr;
+    }
+
+    if (!warn.empty())
+        SDL_Log("GLTF Warning: %s", warn.c_str());
+    if (!err.empty())
+        SDL_Log("GLTF Error: %s", err.c_str());
+
+    if (!ret)
+    {
+        SDL_Log("Failed to load GLTF from memory");
+        return nullptr;
+    }
+
+    return processGLTFModel(model, "MemoryAsset", baseDir);
+}
+
+ModelData *ResourceManager::processGLTFModel(const tinygltf::Model &model, const std::string &name, const std::string &baseDir)
+{
     SDL_Log("Loaded: %s (%zu meshes, %zu materials, %zu textures)",
-            filename, model.meshes.size(), model.materials.size(), model.textures.size());
+            name.c_str(), model.meshes.size(), model.materials.size(), model.textures.size());
 
     ModelData *modelData = new ModelData();
 
@@ -363,7 +410,6 @@ ModelData *ResourceManager::loadModel(const std::string &path)
 
     // --- 1. Load Textures ---
     std::vector<SDL_GPUTransferBuffer *> textureTransferBuffers;
-    std::string baseDir = Utils::getBasePath(filename); // Get base dir for external files
 
     // define texture formats
     std::vector<TextureDataType> textureFormats(model.textures.size(), TextureDataType::UnsignedByte);

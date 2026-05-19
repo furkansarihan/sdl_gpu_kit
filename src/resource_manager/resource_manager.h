@@ -164,6 +164,8 @@ public:
     void disposeCopy(ModelData *copy);
 
     ModelData *loadModel(const std::string &path);
+    ModelData *loadModelFromMemory(const unsigned char *data, unsigned int size, const std::string &extension, const std::string &baseDir);
+    ModelData *processGLTFModel(const tinygltf::Model &model, const std::string &name, const std::string& baseDir);
     Texture loadTextureFromMemory(const TextureParams &params, void *buffer, size_t bufferSize);
     Texture loadTextureFromFile(const TextureParams &params, const std::string &path);
 
