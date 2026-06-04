@@ -38,19 +38,19 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     InputManager::getInstance().addListener(g_cameraController);
     updateManager->add(g_cameraController);
 
-    std::string exePath = Utils::getExecutablePath();
+    std::string basePath = Utils::getBasePath();
 
     // load hdri
     const char *hdriPath = "assets/hdris/kloofendal_43d_clear_2k.hdr";
     TextureParams params;
     params.dataType = TextureDataType::Float32;
     params.sample = true;
-    g_hdrTexture = resourceManager->loadTextureFromFile(params, std::string(exePath + "/" + hdriPath));
+    g_hdrTexture = resourceManager->loadTextureFromFile(params, std::string(basePath + hdriPath));
     renderManager->m_pbrManager->updateEnvironmentTexture(g_hdrTexture.id);
 
     // load asset
     const char *modelPath = "assets/models/DamagedHelmet.glb";
-    ModelData *model = resourceManager->loadModel(std::string(exePath + "/" + modelPath).c_str());
+    ModelData *model = resourceManager->loadModel(std::string(basePath + modelPath).c_str());
 
     // create RenderableModel instance
     if (model)

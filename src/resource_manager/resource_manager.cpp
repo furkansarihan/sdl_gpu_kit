@@ -353,7 +353,7 @@ ModelData *ResourceManager::loadModel(const std::string &path)
         return nullptr;
     }
 
-    std::string baseDir = Utils::getBasePath(path);
+    std::string baseDir = Utils::getBaseDirectoryPath(path);
     return processGLTFModel(model, path, baseDir);
 }
 

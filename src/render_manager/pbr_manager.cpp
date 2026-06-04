@@ -18,14 +18,14 @@ PbrManager::PbrManager(ResourceManager *resourceManager, int cubemapSize)
 
     // cloud noise texture
     {
-        std::string exePath = Utils::getExecutablePath();
+        std::string basePath = Utils::getBasePath();
 
         const char *hdriPath = "src/assets/textures/cloud-noise.jpeg";
         TextureParams params;
         params.dataType = TextureDataType::UnsignedByteSRGB;
         params.sample = true;
 
-        m_cloudNoiseTexture = resourceManager->loadTextureFromFile(params, std::string(exePath + "/" + hdriPath));
+        m_cloudNoiseTexture = resourceManager->loadTextureFromFile(params, std::string(basePath + hdriPath));
     }
 
     m_sunUBO.cameraPos = glm::vec3(0.0f, 0.0f, 0.0f);
@@ -315,10 +315,10 @@ void PbrManager::init()
     // models
     {
         // TODO:
-        std::string exePath = Utils::getExecutablePath();
+        std::string basePath = Utils::getBasePath();
 
-        m_quadModel = m_resourceManager->loadModel(std::string(exePath + "/src/assets/models/quad.glb").c_str());
-        m_cubeModel = m_resourceManager->loadModel(std::string(exePath + "/src/assets/models/cube.glb").c_str());
+        m_quadModel = m_resourceManager->loadModel(std::string(basePath + "src/assets/models/quad.glb").c_str());
+        m_cubeModel = m_resourceManager->loadModel(std::string(basePath + "src/assets/models/cube.glb").c_str());
     }
 
     SDL_ReleaseGPUShader(Utils::device, quadVert);

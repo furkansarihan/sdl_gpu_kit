@@ -8,11 +8,11 @@
 #elif defined(__linux__)
 #include <unistd.h>
 #elif defined(__APPLE__)
-#include <mach-o/dyld.h>
 #include <mach/mach.h>
 
 #endif
 
+#include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_gpu.h>
 #include <SDL3/SDL_log.h>
 
@@ -64,40 +64,22 @@ public:
 #endif
     }
 
-    static std::string getExecutablePath()
+    static std::string getBasePath()
     {
-        std::string path;
-        size_t lastSeparator;
+        static const std::string cached = []() -> std::string {
+            std::string path;
+            if (const char *base = SDL_GetBasePath())
+            {
+                path = base;
+            }
+            return path.empty() ? "./" : path;
+        }();
 
-#if defined(_WIN32) || defined(_WIN64)
-        char buffer[MAX_PATH];
-        GetModuleFileNameA(NULL, buffer, MAX_PATH);
-        path = buffer;
-        lastSeparator = path.find_last_of("\\");
-#elif defined(__linux__)
-        char buffer[PATH_MAX];
-        ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
-        if (len != -1)
-        {
-            buffer[len] = '\0';
-            path = buffer;
-        }
-        lastSeparator = path.find_last_of("/");
-#elif defined(__APPLE__)
-        char buffer[PATH_MAX];
-        uint32_t size = sizeof(buffer);
-        if (_NSGetExecutablePath(buffer, &size) == 0)
-        {
-            path = buffer;
-        }
-        lastSeparator = path.find_last_of("/");
-#endif
-
-        return path.substr(0, lastSeparator);
+        return cached;
     }
 
     // Helper function to get the base directory from a file path
-    static std::string getBasePath(const std::string &path)
+    static std::string getBaseDirectoryPath(const std::string &path)
     {
         size_t last_slash = path.find_last_of("/\\");
         if (last_slash != std::string::npos)
@@ -178,10 +160,10 @@ public:
         const char *extension = ".spv";
 #endif
 
-        std::string exePath = Utils::getExecutablePath();
+        std::string basePath = Utils::getBasePath();
 
         size_t codeSize;
-        void *shaderCode = SDL_LoadFile(std::string(exePath + "/" + filepath + extension).c_str(), &codeSize);
+        void *shaderCode = SDL_LoadFile(std::string(basePath + filepath + extension).c_str(), &codeSize);
         if (!shaderCode)
         {
             SDL_Log("Failed to load shader file: %s", filepath);

@@ -987,12 +987,12 @@ void PostProcess::loadSmaaLuts()
         m_smaaLutSampler = SDL_CreateGPUSampler(Utils::device, &samplerInfo);
     }
 
-    std::string exePath = Utils::getExecutablePath();
+    std::string basePath = Utils::getBasePath();
 
     // --- AREA TEXTURE (RG8) ---
     // Ensure you save "AreaTex.dds" as Uncompressed R8G8 (or A8L8 legacy)
     loadSmaaTextureFromDDS(&m_smaaAreaTex,
-                           std::string(exePath + "/src/assets/textures/AreaTexDX9.dds").c_str(),
+                           std::string(basePath + "src/assets/textures/AreaTexDX9.dds").c_str(),
                            SDL_GPU_TEXTUREFORMAT_R8G8_UNORM);
 
     SDL_SetGPUTextureName(Utils::device, m_smaaAreaTex, "SMAA Area");
@@ -1000,7 +1000,7 @@ void PostProcess::loadSmaaLuts()
     // --- SEARCH TEXTURE (R8) ---
     // Ensure you save "SearchTex.dds" as Uncompressed R8 (Luminance)
     loadSmaaTextureFromDDS(&m_smaaSearchTex,
-                           std::string(exePath + "/src/assets/textures/SearchTex.dds").c_str(),
+                           std::string(basePath + "src/assets/textures/SearchTex.dds").c_str(),
                            SDL_GPU_TEXTUREFORMAT_R8_UNORM);
 
     SDL_SetGPUTextureName(Utils::device, m_smaaSearchTex, "SMAA Search");
