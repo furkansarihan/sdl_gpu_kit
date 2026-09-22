@@ -2,6 +2,12 @@
 
 #include <SDL3/SDL_gpu.h>
 
+#include <glm/ext/matrix_clip_space.hpp>
+#include <glm/ext/matrix_float4x4.hpp>
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/ext/vector_float3.hpp>
+#include <glm/trigonometric.hpp>
+
 #include "../resource_manager/resource_manager.h"
 
 struct CubemapViewUBO

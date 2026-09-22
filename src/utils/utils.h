@@ -1,6 +1,14 @@
 #pragma once
 
+#include <algorithm>
+#include <cctype>
+#include <cstddef>
+#include <cstdint>
 #include <string>
+
+#include <SDL3/SDL_iostream.h>
+#include <SDL3/SDL_stdinc.h>
+#include <SDL3/SDL_video.h>
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <Windows.h>
@@ -8,7 +16,12 @@
 #elif defined(__linux__)
 #include <unistd.h>
 #elif defined(__APPLE__)
+#include <mach/kern_return.h>
 #include <mach/mach.h>
+#include <mach/mach_init.h>
+#include <mach/message.h>
+#include <mach/task.h>
+#include <mach/task_info.h>
 
 #endif
 

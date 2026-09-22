@@ -1,5 +1,7 @@
 #pragma once
 
+#include <SDL3/SDL_scancode.h>
+
 #include "camera.h"
 #include "input_manager/input_manager.h"
 #include "ui/base_ui.h"

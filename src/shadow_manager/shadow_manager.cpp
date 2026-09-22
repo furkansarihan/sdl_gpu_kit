@@ -1,12 +1,28 @@
 #include "shadow_manager.h"
 
+#include <cmath>
+#include <cstddef>
+#include <cstdlib>
+
+#include <SDL3/SDL_error.h>
+#include <SDL3/SDL_gpu.h>
+#include <SDL3/SDL_log.h>
+
+#include <glm/common.hpp>
 #include <glm/ext/matrix_clip_space.hpp>
+#include <glm/ext/matrix_float4x4.hpp>
 #include <glm/ext/matrix_transform.hpp>
+#include <glm/ext/vector_float3.hpp>
+#include <glm/ext/vector_float4.hpp>
+#include <glm/geometric.hpp>
+#include <glm/matrix.hpp>
+#include <glm/trigonometric.hpp>
 
 #include <imgui.h>
 
-#include "../resource_manager/resource_manager.h"
-#include "../utils/utils.h"
+#include "camera.h"
+#include "resource_manager/resource_manager.h"
+#include "utils/utils.h"
 
 // --- Cascaded shadow map texture (2D array) ---
 ShadowManager::ShadowManager()

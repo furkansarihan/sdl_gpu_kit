@@ -1,9 +1,18 @@
 #include "pbr_manager.h"
 
+#include <cmath>
+#include <cstddef>
+#include <string>
+
+#include <SDL3/SDL_error.h>
 #include <SDL3/SDL_gpu.h>
+#include <SDL3/SDL_log.h>
+#include <SDL3/SDL_stdinc.h>
 
 #include <glm/ext/matrix_clip_space.hpp>
+#include <glm/ext/matrix_float4x4.hpp>
 #include <glm/ext/matrix_transform.hpp>
+#include <glm/ext/vector_float3.hpp>
 
 #include "../resource_manager/resource_manager.h"
 #include "../utils/utils.h"

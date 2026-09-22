@@ -1,6 +1,14 @@
 #include "camera_controller.h"
 
+#include <cmath>
+
+#include <SDL3/SDL_mouse.h>
+#include <SDL3/SDL_scancode.h>
+
+#include <glm/ext/vector_float3.hpp>
+#include <glm/geometric.hpp>
 #include <glm/gtx/norm.hpp>
+#include <glm/trigonometric.hpp>
 
 #include <imgui.h>
 

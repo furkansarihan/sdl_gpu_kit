@@ -1,6 +1,20 @@
+#include "animator.h"
+
+#include <cmath>
+#include <string>
 #include <vector>
 
-#include "animator.h"
+#include <glm/common.hpp>
+#include <glm/ext/matrix_float4x4.hpp>
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/ext/quaternion_common.hpp>
+#include <glm/ext/quaternion_geometric.hpp>
+#include <glm/ext/vector_float3.hpp>
+#include <glm/fwd.hpp>
+#include <glm/gtx/quaternion.hpp>
+
+#include "animation/animation.h"
+#include "animation/bone.h"
 
 Animator::Animator(std::vector<Animation *> animations)
     : m_animations(animations)
@@ -69,7 +83,7 @@ void Animator::calculateBoneTransform(const GltfNodeData *node, glm::mat4 parent
         else
         {
             float weight = blendWeight / totalWeight;
-            if (isnan(weight))
+            if (std::isnan(weight))
                 weight = 1.0f;
 
             blendedT = glm::mix(blendedT, bone->m_translation, weight);

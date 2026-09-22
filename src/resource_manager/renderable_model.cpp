@@ -1,5 +1,22 @@
 #include "renderable_model.h"
 
+#include <algorithm>
+#include <cstddef>
+
+#include <SDL3/SDL_gpu.h>
+#include <SDL3/SDL_stdinc.h>
+
+#include <glm/ext/matrix_float4x4.hpp>
+#include <glm/ext/vector_float3.hpp>
+#include <glm/ext/vector_float4.hpp>
+#include <glm/geometric.hpp>
+#include <glm/matrix.hpp>
+
+#include "frustum.h"
+#include "render_manager/pbr_manager.h"
+#include "render_manager/render_manager.h"
+#include "resource_manager/resource_manager.h"
+
 // Helper for Culling
 float ExtractMaxScale(const glm::mat4 &m)
 {

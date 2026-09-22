@@ -1,8 +1,10 @@
 #include "system_monitor_ui.h"
 
+#include <cstdint>
+
 #include <imgui.h>
 
-#include "../../utils/utils.h"
+#include "utils/utils.h"
 
 void SystemMonitorUI::renderUI()
 {

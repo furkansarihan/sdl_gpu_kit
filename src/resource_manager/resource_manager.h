@@ -1,13 +1,23 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
 #include <SDL3/SDL_gpu.h>
+#include <SDL3/SDL_stdinc.h>
 
+#include <glm/ext/matrix_float4x4.hpp>
+#include <glm/ext/vector_float2.hpp>
+#include <glm/ext/vector_float3.hpp>
+#include <glm/ext/vector_float4.hpp>
+#include <glm/ext/vector_uint4.hpp>
 #include <glm/glm.hpp>
 
-#include "../animation/animation.h"
+#include "animation/animation.h"
+#include "animation/bone.h"
 
 struct Vertex
 {
@@ -165,7 +175,7 @@ public:
 
     ModelData *loadModel(const std::string &path);
     ModelData *loadModelFromMemory(const unsigned char *data, unsigned int size, const std::string &extension, const std::string &baseDir);
-    ModelData *processGLTFModel(const tinygltf::Model &model, const std::string &name, const std::string& baseDir);
+    ModelData *processGLTFModel(const tinygltf::Model &model, const std::string &name, const std::string &baseDir);
     Texture loadTextureFromMemory(const TextureParams &params, void *buffer, size_t bufferSize);
     Texture loadTextureFromFile(const TextureParams &params, const std::string &path);
 

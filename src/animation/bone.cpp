@@ -1,12 +1,24 @@
+#include "bone.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <iterator>
+#include <string>
 #include <vector>
 
+#include <glm/common.hpp>
+#include <glm/ext/matrix_float4x4.hpp>
+#include <glm/ext/quaternion_common.hpp>
+#include <glm/ext/quaternion_geometric.hpp>
+#include <glm/ext/vector_float3.hpp>
+#include <glm/ext/vector_float4.hpp>
+#include <glm/fwd.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 
 #include <tiny_gltf.h>
-
-#include "bone.h"
 
 Bone::Bone(const std::string &name,
            int id,

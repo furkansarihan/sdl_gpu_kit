@@ -3,8 +3,9 @@
 #include <SDL3/SDL_gpu.h>
 #include <imgui.h>
 
-#include "../external/imgui/imgui_impl_sdl3.h"
-#include "../external/imgui/imgui_impl_sdlgpu3.h"
+#include "external/imgui/imgui_impl_sdl3.h"
+#include "external/imgui/imgui_impl_sdlgpu3.h"
+#include "ui/base_ui.h"
 
 RootUI::RootUI()
     : m_hidden(false)

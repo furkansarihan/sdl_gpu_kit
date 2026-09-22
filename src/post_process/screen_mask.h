@@ -1,5 +1,10 @@
 #pragma once
 
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <limits>
 #include <vector>
 
 template <int WIDTH, int HEIGHT>

@@ -1,8 +1,22 @@
 #include "post_process.h"
 
+#include <algorithm>
+#include <cstring>
+#include <string>
+
+#include <SDL3/SDL_error.h>
 #include <SDL3/SDL_gpu.h>
+#include <SDL3/SDL_log.h>
+#include <SDL3/SDL_stdinc.h>
+
+#include <glm/ext/matrix_float4x4.hpp>
+#include <glm/ext/vector_float2.hpp>
+#include <glm/ext/vector_float4.hpp>
+#include <glm/ext/vector_int2.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/matrix.hpp>
+
 #include <imgui.h>
 
 #include "../resource_manager/dds_loader.h"

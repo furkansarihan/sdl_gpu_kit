@@ -1,9 +1,13 @@
 // dds_loader.h
 #pragma once
 
-#include <SDL3/SDL_gpu.h>
-#include <SDL3/SDL_log.h>
 #include <cstring>
+
+#include <SDL3/SDL_error.h>
+#include <SDL3/SDL_gpu.h>
+#include <SDL3/SDL_iostream.h>
+#include <SDL3/SDL_log.h>
+#include <SDL3/SDL_stdinc.h>
 
 // DDS Format Constants
 const Uint32 DDS_MAGIC = 0x20534444; // "DDS "

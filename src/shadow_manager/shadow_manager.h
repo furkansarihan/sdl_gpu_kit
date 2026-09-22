@@ -1,8 +1,11 @@
 #pragma once
 
-#include <glm/glm.hpp>
-
 #include <SDL3/SDL_gpu.h>
+
+#include <glm/ext/matrix_float4x4.hpp>
+#include <glm/ext/vector_float3.hpp>
+#include <glm/ext/vector_float4.hpp>
+#include <glm/glm.hpp>
 
 #include "../camera.h"
 #include "../ui/base_ui.h"

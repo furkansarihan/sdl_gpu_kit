@@ -1,7 +1,12 @@
 #pragma once
 
-#include "../render_manager/render_manager.h"
+#include <SDL3/SDL_gpu.h>
+
+#include <glm/ext/matrix_float4x4.hpp>
+
 #include "animation/animator.h"
+#include "frustum.h"
+#include "render_manager/render_manager.h"
 #include "resource_manager.h"
 
 struct ShadowVertexUniforms
