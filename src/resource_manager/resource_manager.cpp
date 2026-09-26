@@ -111,8 +111,14 @@ ModelData *ResourceManager::copyModelGeometry(const ModelData *source)
 
     // Deep copy meshes: clone vertex data + create new GPU vertex buffers
     // Share index buffers
-    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(m_device);
-    SDL_GPUCopyPass *copyPass = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUCommandBuffer *cmd = nullptr;
+    SDL_GPUCopyPass *copyPass = nullptr;
+
+    if (m_device)
+    {
+        cmd = SDL_AcquireGPUCommandBuffer(m_device);
+        copyPass = SDL_BeginGPUCopyPass(cmd);
+    }
 
     copy->meshes.resize(source->meshes.size());
     for (size_t meshIdx = 0; meshIdx < source->meshes.size(); ++meshIdx)
@@ -144,6 +150,9 @@ ModelData *ResourceManager::copyModelGeometry(const ModelData *source)
             dstPrim.indexBuffer = srcPrim.indexBuffer;
             dstPrim.indexTransferBuffer = nullptr; // not owned
 
+            if (!m_device)
+                continue;
+
             // Create new GPU vertex buffer
             Uint32 vertexDataSize = static_cast<Uint32>(dstPrim.vertices.size() * sizeof(Vertex));
 
@@ -167,10 +176,13 @@ ModelData *ResourceManager::copyModelGeometry(const ModelData *source)
         }
     }
 
-    SDL_EndGPUCopyPass(copyPass);
-    SDL_GPUFence *fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
-    SDL_WaitForGPUFences(m_device, true, &fence, 1);
-    SDL_ReleaseGPUFence(m_device, fence);
+    if (m_device)
+    {
+        SDL_EndGPUCopyPass(copyPass);
+        SDL_GPUFence *fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+        SDL_WaitForGPUFences(m_device, true, &fence, 1);
+        SDL_ReleaseGPUFence(m_device, fence);
+    }
 
     return copy;
 }
