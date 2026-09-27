@@ -68,6 +68,9 @@ ResourceManager::~ResourceManager()
 
 void ResourceManager::dispose(ModelData *model)
 {
+    if (!model)
+        return;
+
     for (auto &mesh : model->meshes)
     {
         for (auto &prim : mesh.primitives)
