@@ -47,7 +47,7 @@ void Animator::update(float deltaTime)
 
 void Animator::calculateBoneTransform(const GltfNodeData *node, glm::mat4 parentTransform)
 {
-    std::string nodeName = node->name;
+    const std::string &nodeName = node->name;
     glm::mat4 nodeTransform = node->transformation;
 
     glm::vec3 blendedT;
@@ -59,6 +59,9 @@ void Animator::calculateBoneTransform(const GltfNodeData *node, glm::mat4 parent
     for (int i = 0; i < m_state.animations.size(); i++)
     {
         Anim *anim = m_state.animations[i];
+        if (anim->m_blendFactor == 0.0f)
+            continue;
+
         Bone *bone = anim->m_animation->getBone(nodeName);
 
         if (!bone)
@@ -98,6 +101,9 @@ void Animator::calculateBoneTransform(const GltfNodeData *node, glm::mat4 parent
     for (int i = 0; i < m_state.poses.size(); i++)
     {
         Anim *anim = m_state.poses[i];
+        if (anim->m_blendFactor == 0.0f)
+            continue;
+
         Animation *animation = anim->m_animation;
         Bone *bone = animation->getBone(nodeName);
 
@@ -126,12 +132,12 @@ void Animator::calculateBoneTransform(const GltfNodeData *node, glm::mat4 parent
     glm::mat4 globalTransformation = parentTransform * nodeTransform;
 
     // TODO: always first index is correct?
-    auto boneInfoMap = m_animations[0]->m_boneInfoMap;
-    if (boneInfoMap.find(nodeName) != boneInfoMap.end())
+    const auto &boneInfoMap = m_animations[0]->m_boneInfoMap;
+    auto info = boneInfoMap.find(nodeName);
+    if (info != boneInfoMap.end())
     {
-        int index = boneInfoMap[nodeName].id;
-        glm::mat4 offset = boneInfoMap[nodeName].offset;
-        m_finalBoneMatrices[index] = globalTransformation * offset;
+        int index = info->second.id;
+        m_finalBoneMatrices[index] = globalTransformation * info->second.offset;
         m_globalMatrices[index] = globalTransformation;
     }
 

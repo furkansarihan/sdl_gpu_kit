@@ -126,12 +126,8 @@ Animation::~Animation()
 
 Bone *Animation::getBone(const std::string &name)
 {
-    if (m_bones.find(name) != m_bones.end())
-    {
-        return m_bones[name];
-    }
-
-    return nullptr;
+    auto it = m_bones.find(name);
+    return it == m_bones.end() ? nullptr : it->second;
 }
 
 void Animation::ReadBonesFromSkin(const tinygltf::Model &model,
